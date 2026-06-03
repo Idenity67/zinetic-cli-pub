@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-DIST_REPO="${ZIN_DIST_REPO:-Idenity67/zinetic-cli-dist}"
+DIST_REPO="${ZIN_DIST_REPO:-Idenity67/zinetic-cli-pub}"
 REPO="${ZIN_REPO:-$DIST_REPO}"
 BINARY="zin"
 INSTALL_DIR="${ZIN_INSTALL_DIR:-/usr/local/bin}"
@@ -163,10 +163,19 @@ main() {
   cd "$TMPDIR"
   verify_sigstore_bundle
 
-  if ! awk -v file="$ARCHIVE" '$2 == file { print; found=1 } END { exit found ? 0 : 1 }' checksums.txt > checksum.expected; then
+  CHECKSUM_LINE=""
+  while read -r checksum filename rest; do
+    if [ "$filename" = "$ARCHIVE" ]; then
+      CHECKSUM_LINE="${checksum}  ${filename}"
+      break
+    fi
+  done < checksums.txt
+
+  if [ -z "$CHECKSUM_LINE" ]; then
     printf "error: checksum for %s not found in checksums.txt\n" "$ARCHIVE" >&2
     exit 1
   fi
+  printf "%s\n" "$CHECKSUM_LINE" > checksum.expected
 
   if [ "$OS" = "darwin" ] && command -v shasum >/dev/null 2>&1; then
     shasum -a 256 -c --quiet checksum.expected
