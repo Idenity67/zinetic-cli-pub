@@ -7,6 +7,7 @@ BINARY="zin"
 INSTALL_DIR="${ZIN_INSTALL_DIR:-/usr/local/bin}"
 RELEASE_BASE_URL="${ZIN_RELEASE_BASE_URL:-https://github.com/${REPO}/releases/download}"
 REQUIRE_SIGSTORE="${ZIN_REQUIRE_SIGSTORE:-0}"
+SKIP_SIGSTORE="${ZIN_SKIP_SIGSTORE:-0}"
 SIGSTORE_OIDC_ISSUER="${ZIN_SIGSTORE_OIDC_ISSUER:-https://token.actions.githubusercontent.com}"
 SIGSTORE_IDENTITY_REGEX="${ZIN_SIGSTORE_IDENTITY_REGEX:-^https://github\.com/Idenity67/zinetic-cli/\.github/workflows/release\.yaml@refs/tags/.*$}"
 INSTALLER_ORIGIN="${ZIN_INSTALLER_ORIGIN:-https://cli.zinetic.net/install.sh}"
@@ -97,29 +98,38 @@ download_release_assets() {
 }
 
 verify_sigstore_bundle() {
-  if [ ! -s "checksums.txt.sigstore.json" ]; then
-    if [ "$REQUIRE_SIGSTORE" = "1" ]; then
-      printf "error: missing checksums.txt.sigstore.json and ZIN_REQUIRE_SIGSTORE=1\n" >&2
-      exit 1
-    fi
-    printf "warning: checksums.txt.sigstore.json not found; skipping Sigstore verification\n" >&2
+  if [ "$SKIP_SIGSTORE" = "1" ]; then
+    printf "warning: Sigstore verification explicitly disabled via ZIN_SKIP_SIGSTORE=1\n" >&2
+    printf "warning: installing without release signature verification\n" >&2
     return 0
   fi
 
   if ! command -v cosign >/dev/null 2>&1; then
     if [ "$REQUIRE_SIGSTORE" = "1" ]; then
-      printf "error: cosign not found and ZIN_REQUIRE_SIGSTORE=1\n" >&2
+      printf "error: cosign not found and Sigstore verification is required (ZIN_REQUIRE_SIGSTORE=1)\n" >&2
       exit 1
     fi
-    printf "warning: cosign not found; skipping Sigstore verification\n" >&2
+    printf "warning: cosign not found; cannot verify the release signature\n" >&2
+    printf "warning: install cosign or set ZIN_SKIP_SIGSTORE=1 to acknowledge and skip verification\n" >&2
     return 0
   fi
 
-  cosign verify-blob \
+  if [ ! -s "checksums.txt.sigstore.json" ]; then
+    printf "error: cosign is installed but checksums.txt.sigstore.json is missing\n" >&2
+    printf "error: refusing to install an unverified release; set ZIN_SKIP_SIGSTORE=1 to override\n" >&2
+    exit 1
+  fi
+
+  printf "Verifying release signature with cosign...\n"
+  if ! cosign verify-blob \
     --bundle checksums.txt.sigstore.json \
     --certificate-oidc-issuer "$SIGSTORE_OIDC_ISSUER" \
     --certificate-identity-regexp "$SIGSTORE_IDENTITY_REGEX" \
-    checksums.txt >/dev/null
+    checksums.txt >/dev/null 2>&1; then
+    printf "error: Sigstore signature verification failed; refusing to install\n" >&2
+    exit 1
+  fi
+  printf "Sigstore signature verified.\n"
 }
 
 main() {
@@ -153,7 +163,7 @@ main() {
   cd "$TMPDIR"
   verify_sigstore_bundle
 
-  if ! grep "$ARCHIVE" checksums.txt > checksum.expected; then
+  if ! awk -v file="$ARCHIVE" '$2 == file { print; found=1 } END { exit found ? 0 : 1 }' checksums.txt > checksum.expected; then
     printf "error: checksum for %s not found in checksums.txt\n" "$ARCHIVE" >&2
     exit 1
   fi
