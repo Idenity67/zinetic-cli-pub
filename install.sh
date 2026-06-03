@@ -1,8 +1,8 @@
 #!/bin/sh
 set -eu
 
-DIST_REPO="${ZIN_DIST_REPO:-Idenity67/zinetic-cli-pub}"
-REPO="${ZIN_REPO:-$DIST_REPO}"
+PUB_REPO="${ZIN_PUB_REPO:-${ZIN_DIST_REPO:-Idenity67/zinetic-cli-pub}}"
+REPO="${ZIN_REPO:-$PUB_REPO}"
 BINARY="zin"
 INSTALL_DIR="${ZIN_INSTALL_DIR:-/usr/local/bin}"
 RELEASE_BASE_URL="${ZIN_RELEASE_BASE_URL:-https://github.com/${REPO}/releases/download}"
