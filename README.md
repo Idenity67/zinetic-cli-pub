@@ -4,17 +4,23 @@ Public distribution repository for the released `zin` CLI installer and release 
 
 ## Install
 
+Install `cosign` first so the installer can verify the signed release checksums.
+
 ```sh
 curl -fsSL https://cli.zinetic.net/install.sh | sh
 ```
 
-To require Sigstore verification:
+Enterprise installs can make the requirement explicit:
 
 ```sh
 curl -fsSL https://cli.zinetic.net/install.sh | ZIN_REQUIRE_SIGSTORE=1 sh
 ```
 
-The installer verifies SHA-256 checksums for every downloaded archive. When `cosign` is installed, the installer also verifies the Sigstore bundle and refuses unverified releases.
+The installer verifies SHA-256 checksums for every downloaded archive and verifies the Sigstore bundle by default. If `cosign` is missing, installation fails. To explicitly accept an unverified install in a controlled break-glass scenario:
+
+```sh
+curl -fsSL https://cli.zinetic.net/install.sh | ZIN_SKIP_SIGSTORE=1 sh
+```
 
 ## Version Pinning
 

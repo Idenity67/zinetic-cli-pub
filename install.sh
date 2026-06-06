@@ -6,7 +6,7 @@ REPO="${ZIN_REPO:-$PUB_REPO}"
 BINARY="zin"
 INSTALL_DIR="${ZIN_INSTALL_DIR:-/usr/local/bin}"
 RELEASE_BASE_URL="${ZIN_RELEASE_BASE_URL:-https://github.com/${REPO}/releases/download}"
-REQUIRE_SIGSTORE="${ZIN_REQUIRE_SIGSTORE:-0}"
+REQUIRE_SIGSTORE="${ZIN_REQUIRE_SIGSTORE:-1}"
 SKIP_SIGSTORE="${ZIN_SKIP_SIGSTORE:-0}"
 SIGSTORE_OIDC_ISSUER="${ZIN_SIGSTORE_OIDC_ISSUER:-https://token.actions.githubusercontent.com}"
 SIGSTORE_IDENTITY_REGEX="${ZIN_SIGSTORE_IDENTITY_REGEX:-^https://github\.com/Idenity67/zinetic-cli/\.github/workflows/release\.yaml@refs/tags/.*$}"
@@ -105,13 +105,13 @@ verify_sigstore_bundle() {
   fi
 
   if ! command -v cosign >/dev/null 2>&1; then
+    printf "error: cosign not found; verified installs are required by default.\n" >&2
+    printf "error: install cosign (https://docs.sigstore.dev/cosign/installation), then rerun this installer.\n" >&2
+    printf "error: to explicitly accept an unverified install, set ZIN_SKIP_SIGSTORE=1.\n" >&2
     if [ "$REQUIRE_SIGSTORE" = "1" ]; then
-      printf "error: cosign not found and Sigstore verification is required (ZIN_REQUIRE_SIGSTORE=1)\n" >&2
-      exit 1
+      printf "error: enterprise mode is active via ZIN_REQUIRE_SIGSTORE=1.\n" >&2
     fi
-    printf "warning: cosign not found; cannot verify the release signature\n" >&2
-    printf "warning: install cosign or set ZIN_SKIP_SIGSTORE=1 to acknowledge and skip verification\n" >&2
-    return 0
+    exit 1
   fi
 
   if [ ! -s "checksums.txt.sigstore.json" ]; then
