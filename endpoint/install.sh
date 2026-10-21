@@ -1,11 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 
-ZE_VERSION="p1-04-uat-20261020-g0b688ce"
-ZE_BASE_URL="${ZINETIC_ENDPOINT_BASE_URL:-https://github.com/Idenity67/zinetic-endpoint-pub/releases/download/p1-04-uat-20261020-g0b688ce}"
+ZE_VERSION="p1-04-uat-20261021-g290d499"
+ZE_BASE_URL="${ZINETIC_ENDPOINT_BASE_URL:-https://github.com/Idenity67/zinetic-endpoint-pub/releases/download/p1-04-uat-20261021-g290d499}"
 ZE_BASE_URL="${ZE_BASE_URL%/}"
-ZE_PKG="Zinetic-Endpoint-p1-04-uat-20261020-g0b688ce.pkg"
-ZE_PKG_SHA256="8ed303c8a619928e88500c75afcfea42de10a7478631f5a416aa9c4999b17566"
+ZE_PKG="Zinetic-Endpoint-p1-04-uat-20261021-g290d499.pkg"
+ZE_PKG_SHA256="6da26dcf6ca05becd202c50bb32e551e16710511b86b1848adba5d6b25000fe2"
 ZE_BIN_DIR="/Library/Application Support/Zinetic/bin"
 ZE_CLI_LINK="/usr/local/bin/zinetic"
 ZE_WINDOWS_COMMAND="irm https://cli.zinetic.net/endpoint/install.ps1 | iex"
