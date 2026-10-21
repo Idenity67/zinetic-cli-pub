@@ -1,11 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 
-ZE_VERSION="p1-04-uat-20261021-g8cab5a7"
-ZE_BASE_URL="${ZINETIC_ENDPOINT_BASE_URL:-https://github.com/Idenity67/zinetic-endpoint-pub/releases/download/p1-04-uat-20261021-g8cab5a7}"
+ZE_VERSION="p1-04-uat-20261021-g7ff1a2d"
+ZE_BASE_URL="${ZINETIC_ENDPOINT_BASE_URL:-https://github.com/Idenity67/zinetic-endpoint-pub/releases/download/p1-04-uat-20261021-g7ff1a2d}"
 ZE_BASE_URL="${ZE_BASE_URL%/}"
-ZE_PKG="Zinetic-Endpoint-p1-04-uat-20261021-g8cab5a7.pkg"
-ZE_PKG_SHA256="fbfcc8e41efb69bdf5b772d38fb84cd8e8cbdcb599a5e0922ed574b0ce8434e9"
+ZE_PKG="Zinetic-Endpoint-p1-04-uat-20261021-g7ff1a2d.pkg"
+ZE_PKG_SHA256="a195990c12ba10a94ab65d8683c93543f4d69e2ab690aa5a9f9c237837de4aff"
 ZE_BIN_DIR="/Library/Application Support/Zinetic/bin"
 ZE_CLI_LINK="/usr/local/bin/zinetic"
 ZE_WINDOWS_COMMAND="irm https://cli.zinetic.net/endpoint/install.ps1 | iex"
@@ -92,10 +92,30 @@ ze_command_name() {
 	fi
 }
 
+ze_endpoint_state() {
+	local view
+	view="$("$ZE_BIN_DIR/zinetic" endpoint status --json 2>/dev/null || true)"
+	printf '%s\n' "$view" | sed -n 's/.*"state":"\([A-Z_]*\)".*/\1/p' | head -n 1
+}
+
 ze_next_steps() {
+	local state
+	state="$(ze_endpoint_state)"
 	ze_say ""
-	ze_say "Next, set up this device. Run this as yourself, not with sudo:"
-	ze_say "  $(ze_command_name) endpoint setup"
+	case "$state" in
+	"" | NOT_INSTALLED | SETUP_REQUIRED)
+		ze_say "Next, set up this device. Run this as yourself, not with sudo:"
+		ze_say "  $(ze_command_name) endpoint setup"
+		;;
+	ENROLLMENT_INCOMPLETE)
+		ze_say "Setup has not finished on this device. To continue it, run this as yourself, not with sudo:"
+		ze_say "  $(ze_command_name) endpoint setup"
+		;;
+	*)
+		ze_say "This device is already set up and keeps its enrollment. To see how the endpoint is doing, run:"
+		ze_say "  $(ze_command_name) endpoint status"
+		;;
+	esac
 }
 
 ze_main() {

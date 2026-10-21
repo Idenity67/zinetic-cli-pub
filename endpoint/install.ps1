@@ -3,17 +3,17 @@
     $ErrorActionPreference = 'Stop'
     $ProgressPreference = 'SilentlyContinue'
 
-    $version = 'p1-04-uat-20261021-g8cab5a7'
-    $baseUrl = 'https://github.com/Idenity67/zinetic-endpoint-pub/releases/download/p1-04-uat-20261021-g8cab5a7'
+    $version = 'p1-04-uat-20261021-g7ff1a2d'
+    $baseUrl = 'https://github.com/Idenity67/zinetic-endpoint-pub/releases/download/p1-04-uat-20261021-g7ff1a2d'
     if ($env:ZINETIC_ENDPOINT_BASE_URL) {
         $baseUrl = $env:ZINETIC_ENDPOINT_BASE_URL
     }
     $baseUrl = $baseUrl.TrimEnd('/')
     $hashes = @{
-        'zinetic-windows-amd64.exe'  = 'adf5d5b44f6bb0873347815aeaedf10dfb815eb8fc0591828a89cfc0f7ab1fa5'
-        'zineticd-windows-amd64.exe' = '376fd12f147d290c29ff01f47a9a0cb6e142d18750b855dfb87f55c724b167b4'
-        'zinetic-windows-arm64.exe'  = 'a1eefd36ddd33b7ad72046202b7ef6f74bf21cef20087fd1405bb385492c23c7'
-        'zineticd-windows-arm64.exe' = '1c5a15f119d8f6171a7f8009e33d8e91cde01ab7092965c4e9e0a29861244780'
+        'zinetic-windows-amd64.exe'  = '2f0c00f65cc741ae296b5fbc087f4c0dce4d54ad7c78e9890cc00318ce3db2ca'
+        'zineticd-windows-amd64.exe' = 'f23abb53a45ddb24343d715b829fed491758d3ca34b6903bb2f8acbd52045160'
+        'zinetic-windows-arm64.exe'  = '5e06af2559e227172c8057f773941b9faa494867a83f8b3ad72035a8f324b376'
+        'zineticd-windows-arm64.exe' = 'c05cf5c5c05ae491c475f2d2ee470299de1413c74cc660bd50ea457ec393c2b9'
     }
     $serviceName = 'ZineticEndpointCollector'
     $macCommand = 'curl -fsSL https://cli.zinetic.net/endpoint/install.sh | bash'
@@ -29,6 +29,24 @@
             12 { return 'arm64' }
         }
         Stop-Installer "this processor ($($cpu.Architecture)) is not supported; Zinetic Endpoint runs on x64 and Arm64 Windows"
+    }
+
+    function Get-EndpointState([string]$installDir) {
+        $cli = Join-Path $installDir 'zinetic.exe'
+        if (-not (Test-Path -LiteralPath $cli)) {
+            return ''
+        }
+        try {
+            $json = & $cli endpoint status --json 2>$null
+            $global:LASTEXITCODE = 0
+            $state = ($json | Out-String | ConvertFrom-Json).state
+            if ($state -is [string]) {
+                return $state
+            }
+        } catch {
+            $global:LASTEXITCODE = 0
+        }
+        return ''
     }
 
     function Get-InstalledVersion([string]$directory) {
@@ -188,6 +206,18 @@
     }
 
     Write-Host ''
-    Write-Host 'Next, set up this device:'
-    Write-Host '  zinetic endpoint setup'
+    switch (Get-EndpointState $installDir) {
+        'ENROLLMENT_INCOMPLETE' {
+            Write-Host 'Setup has not finished on this device. To continue it, run:'
+            Write-Host '  zinetic endpoint setup'
+        }
+        { $_ -and $_ -notin @('NOT_INSTALLED', 'SETUP_REQUIRED', 'ENROLLMENT_INCOMPLETE') } {
+            Write-Host 'This device is already set up and keeps its enrollment. To see how the endpoint is doing, run:'
+            Write-Host '  zinetic endpoint status'
+        }
+        default {
+            Write-Host 'Next, set up this device:'
+            Write-Host '  zinetic endpoint setup'
+        }
+    }
 }
