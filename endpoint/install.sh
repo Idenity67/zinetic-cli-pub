@@ -1,14 +1,27 @@
 #!/bin/bash
 set -euo pipefail
 
-ZE_VERSION="p1-04-uat-20261021-g7ff1a2d"
-ZE_BASE_URL="${ZINETIC_ENDPOINT_BASE_URL:-https://github.com/Idenity67/zinetic-endpoint-pub/releases/download/p1-04-uat-20261021-g7ff1a2d}"
+ZE_VERSION="p1-04-uat-20261023-g588aa1f"
+ZE_BASE_URL="${ZINETIC_ENDPOINT_BASE_URL:-https://github.com/Idenity67/zinetic-endpoint-pub/releases/download/p1-04-uat-20261023-g588aa1f}"
 ZE_BASE_URL="${ZE_BASE_URL%/}"
-ZE_PKG="Zinetic-Endpoint-p1-04-uat-20261021-g7ff1a2d.pkg"
-ZE_PKG_SHA256="a195990c12ba10a94ab65d8683c93543f4d69e2ab690aa5a9f9c237837de4aff"
-ZE_BIN_DIR="/Library/Application Support/Zinetic/bin"
+ZE_PKG="Zinetic-Endpoint-p1-04-uat-20261023-g588aa1f.pkg"
+ZE_PKG_SHA256="ab9da4f096941d0c021dd78d9e310ff23798c084a6386c5bc7ad1db07fd94b55"
+ZE_LINUX_SHA256_ZINETIC_AMD64="c7cb84f8d77a94870604460e58ea4321bb4ebb47d311d9c307d7037e531d3b36"
+ZE_LINUX_SHA256_ZINETICD_AMD64="57d0d7ac7157d3557312c34c11022c89448e81428ae1a2c4567b772a007837ec"
+ZE_LINUX_SHA256_ZINETIC_ARM64="23fe01b138958b582854e154927b4116545e4cc0f2dd382e77ab9c7c3b539a41"
+ZE_LINUX_SHA256_ZINETICD_ARM64="6ef6729d537d2362da3cf1b9897ae01020006fff9c4f159ed460cca151bf2582"
+ZE_MACOS_BIN_DIR="/Library/Application Support/Zinetic/bin"
+ZE_LINUX_BIN_DIR="/opt/zinetic/bin"
 ZE_CLI_LINK="/usr/local/bin/zinetic"
-ZE_WINDOWS_COMMAND="irm https://cli.zinetic.net/endpoint/install.ps1 | iex"
+ZE_SYSTEMD_RUNTIME="/run/systemd/system"
+ZE_SYSTEMD_UNIT="/etc/systemd/system/zineticd-collector.service"
+ZE_SYSTEMD_CREDS="/usr/bin/systemd-creds /bin/systemd-creds"
+ZE_WSL_RELEASE="/proc/sys/kernel/osrelease"
+ZE_WINDOWS_INSTALLER="${ZINETIC_ENDPOINT_WINDOWS_INSTALLER_URL:-https://cli.zinetic.net/endpoint/install.ps1}"
+ZE_WINDOWS_COMMAND="irm $ZE_WINDOWS_INSTALLER | iex"
+ZE_OS=""
+ZE_ARCH=""
+ZE_BIN_DIR="$ZE_MACOS_BIN_DIR"
 ZE_WORK=""
 
 ze_say() {
@@ -26,15 +39,61 @@ ze_cleanup() {
 	fi
 }
 
-ze_check_platform() {
-	local system major
-	system="$(uname -s)"
-	case "$system" in
-	Darwin) ;;
-	Linux) ze_fail "Linux is not supported by this release; Zinetic Endpoint currently runs on macOS and Windows" ;;
-	MINGW* | MSYS* | CYGWIN*) ze_fail "on Windows, open PowerShell as Administrator and run: $ZE_WINDOWS_COMMAND" ;;
-	*) ze_fail "$system is not supported; Zinetic Endpoint runs on macOS and Windows" ;;
+ze_as_root() {
+	if [ "$(id -u)" -eq 0 ]; then
+		"$@"
+	else
+		sudo "$@"
+	fi
+}
+
+ze_windows_handoff() {
+	local why="$1" shell="" candidate
+	for candidate in powershell.exe pwsh.exe; do
+		if command -v "$candidate" >/dev/null 2>&1; then
+			shell="$candidate"
+			break
+		fi
+	done
+	if [ -z "$shell" ]; then
+		ze_fail "$why; on Windows, open PowerShell and run: $ZE_WINDOWS_COMMAND"
+	fi
+	ze_say "$why, so the Windows installer is used instead."
+	ze_say "It runs in PowerShell, and Windows asks for administrator rights."
+	if ! "$shell" -NoProfile -ExecutionPolicy Bypass -Command "$ZE_WINDOWS_COMMAND" </dev/null; then
+		ze_fail "the Windows installer did not finish; its messages above say why"
+	fi
+	ze_say ""
+	ze_say "Run zinetic endpoint setup in a new PowerShell window; this shell does not see the updated PATH yet."
+	exit 0
+}
+
+ze_is_wsl() {
+	local release=""
+	if [ -r "$ZE_WSL_RELEASE" ]; then
+		release="$(cat "$ZE_WSL_RELEASE")"
+	fi
+	case "$release" in
+	*[Mm]icrosoft* | *WSL*) return 0 ;;
 	esac
+	return 1
+}
+
+ze_require_rendered() {
+	local platform="$1" sum
+	shift
+	for sum in "$@"; do
+		case "$sum" in
+		*[!0-9a-f]*) ze_fail "this installer was not built for $platform; install from https://cli.zinetic.net/endpoint/install.sh" ;;
+		esac
+		if [ "${#sum}" -ne 64 ]; then
+			ze_fail "this installer was not built for $platform; install from https://cli.zinetic.net/endpoint/install.sh"
+		fi
+	done
+}
+
+ze_check_macos() {
+	local major
 	major="$(sw_vers -productVersion | cut -d. -f1)"
 	case "$major" in
 	'' | *[!0-9]*) ze_fail "the macOS version could not be read" ;;
@@ -42,6 +101,97 @@ ze_check_platform() {
 	if [ "$major" -lt 12 ]; then
 		ze_fail "macOS $(sw_vers -productVersion) is too old; Zinetic Endpoint needs macOS 12 or later"
 	fi
+	ze_require_rendered macOS "$ZE_PKG_SHA256"
+	ZE_OS="darwin"
+	ZE_BIN_DIR="$ZE_MACOS_BIN_DIR"
+}
+
+ze_has_systemd_creds() {
+	local tool
+	for tool in $ZE_SYSTEMD_CREDS; do
+		if [ -x "$tool" ]; then
+			return 0
+		fi
+	done
+	return 1
+}
+
+ze_root_controlled() {
+	local path="$1" uid gid mode
+	read -r uid gid mode < <(stat -c '%u %g %a' "$path")
+	if [ "$uid" != 0 ]; then
+		printf '%s is owned by uid %s, not root' "$path" "$uid"
+		return 1
+	fi
+	if [ $((8#$mode & 8#002)) -ne 0 ]; then
+		printf '%s is writable by every user' "$path"
+		return 1
+	fi
+	if [ $((8#$mode & 8#020)) -ne 0 ] && [ "$gid" != 0 ]; then
+		printf '%s is writable by members of group %s' "$path" "$gid"
+		return 1
+	fi
+	return 0
+}
+
+ze_check_linux_folders() {
+	local dir problem
+	dir="$(dirname "$ZE_LINUX_BIN_DIR")"
+	while [ ! -e "$dir" ] && [ "$dir" != / ]; do
+		dir="$(dirname "$dir")"
+	done
+	dir="$(readlink -f "$dir")"
+	while :; do
+		if ! problem="$(ze_root_controlled "$dir")"; then
+			ze_fail "$problem; zineticd runs as root, so every folder above $ZE_LINUX_BIN_DIR must be owned by root and writable only by root"
+		fi
+		[ "$dir" = / ] && break
+		dir="$(dirname "$dir")"
+	done
+}
+
+ze_check_linux() {
+	local machine version
+	machine="$(uname -m)"
+	case "$machine" in
+	x86_64 | amd64) ZE_ARCH="amd64" ;;
+	aarch64 | arm64) ZE_ARCH="arm64" ;;
+	*) ze_fail "the $machine processor is not supported; Zinetic Endpoint runs on x86_64 and arm64 Linux" ;;
+	esac
+	if [ ! -d "$ZE_SYSTEMD_RUNTIME" ]; then
+		ze_fail "Zinetic Endpoint runs as a systemd service, and systemd is not running on this machine"
+	fi
+	version="$(systemctl --version 2>/dev/null | awk 'NR == 1 { print $2 }' | sed 's/[^0-9].*//')"
+	case "$version" in
+	'' | *[!0-9]*) ze_fail "the systemd version could not be read" ;;
+	esac
+	if [ "$version" -lt 250 ]; then
+		ze_fail "this machine runs systemd $version; Zinetic Endpoint keeps its device key as a systemd encrypted credential, which needs systemd 250 or later"
+	fi
+	if ! ze_has_systemd_creds; then
+		ze_fail "systemd-creds was not found; Zinetic Endpoint keeps its device key as a systemd encrypted credential, which needs systemd-creds from systemd 250 or later"
+	fi
+	ze_require_rendered Linux "$ZE_LINUX_SHA256_ZINETIC_AMD64" "$ZE_LINUX_SHA256_ZINETICD_AMD64" \
+		"$ZE_LINUX_SHA256_ZINETIC_ARM64" "$ZE_LINUX_SHA256_ZINETICD_ARM64"
+	ze_check_linux_folders
+	ZE_OS="linux"
+	ZE_BIN_DIR="$ZE_LINUX_BIN_DIR"
+}
+
+ze_check_platform() {
+	local system
+	system="$(uname -s)"
+	case "$system" in
+	Darwin) ze_check_macos ;;
+	Linux)
+		if ze_is_wsl; then
+			ze_windows_handoff "this is Linux running under WSL, and Zinetic Endpoint protects the Windows device itself"
+		fi
+		ze_check_linux
+		;;
+	MINGW* | MSYS* | CYGWIN* | UCRT* | CLANG* | *_NT-*) ze_windows_handoff "this is a Windows shell ($system)" ;;
+	*) ze_fail "$system is not supported; Zinetic Endpoint runs on macOS, Linux and Windows" ;;
+	esac
 }
 
 ze_installed_version() {
@@ -51,34 +201,88 @@ ze_installed_version() {
 	fi
 }
 
-ze_download() {
-	local url="$ZE_BASE_URL/$ZE_PKG" out="$1"
+ze_sha256() {
+	if command -v sha256sum >/dev/null 2>&1; then
+		sha256sum "$1" | awk '{ print $1 }'
+	else
+		shasum -a 256 "$1" | awk '{ print $1 }'
+	fi
+}
+
+ze_fetch() {
+	local name="$1" out="$2" url="$ZE_BASE_URL/$1"
 	local progress=(--silent --show-error)
 	if [ -t 2 ]; then
 		progress=(--progress-bar)
 	fi
-	ze_say "Downloading $ZE_PKG"
+	ze_say "Downloading $name"
 	if ! curl --fail --location --retry 3 --connect-timeout 20 "${progress[@]}" --output "$out" "$url"; then
 		ze_fail "could not download $url; nothing was installed"
 	fi
 }
 
-ze_verify() {
-	local actual
-	actual="$(shasum -a 256 "$1" | awk '{ print $1 }')"
-	if [ "$actual" != "$ZE_PKG_SHA256" ]; then
-		ze_fail "the downloaded package does not match the published checksum (expected $ZE_PKG_SHA256, got $actual); nothing was installed"
+ze_check_sum() {
+	local file="$1" expected="$2" what="$3" actual
+	actual="$(ze_sha256 "$file")"
+	if [ "$actual" != "$expected" ]; then
+		ze_fail "the downloaded $what does not match the published checksum (expected $expected, got $actual); nothing was installed"
 	fi
-	ze_say "Checksum verified"
 }
 
-ze_install() {
-	local pkg="$1"
+ze_install_macos() {
+	local pkg="$ZE_WORK/$ZE_PKG"
+	ze_fetch "$ZE_PKG" "$pkg"
+	ze_check_sum "$pkg" "$ZE_PKG_SHA256" "package"
+	ze_say "Checksum verified"
 	if [ "$(id -u)" -eq 0 ]; then
 		installer -pkg "$pkg" -target / || ze_fail "the macOS installer failed; see /var/log/install.log"
 	else
 		ze_say "Installing needs administrator rights. macOS may ask for your password."
 		sudo installer -pkg "$pkg" -target / || ze_fail "the macOS installer failed; see /var/log/install.log"
+	fi
+}
+
+ze_install_linux() {
+	local cli="zinetic-linux-$ZE_ARCH" daemon="zineticd-linux-$ZE_ARCH" cli_sum daemon_sum
+	case "$ZE_ARCH" in
+	amd64)
+		cli_sum="$ZE_LINUX_SHA256_ZINETIC_AMD64"
+		daemon_sum="$ZE_LINUX_SHA256_ZINETICD_AMD64"
+		;;
+	arm64)
+		cli_sum="$ZE_LINUX_SHA256_ZINETIC_ARM64"
+		daemon_sum="$ZE_LINUX_SHA256_ZINETICD_ARM64"
+		;;
+	esac
+	ze_fetch "$cli" "$ZE_WORK/zinetic"
+	ze_fetch "$daemon" "$ZE_WORK/zineticd"
+	ze_check_sum "$ZE_WORK/zinetic" "$cli_sum" "$cli"
+	ze_check_sum "$ZE_WORK/zineticd" "$daemon_sum" "$daemon"
+	ze_say "Checksums verified"
+	if [ "$(id -u)" -ne 0 ]; then
+		ze_say "Installing needs administrator rights. sudo may ask for your password."
+	fi
+	local folder
+	for folder in "$(dirname "$ZE_BIN_DIR")" "$ZE_BIN_DIR"; do
+		ze_as_root install -d -o root -g root -m 0755 "$folder" ||
+			ze_fail "could not create $folder"
+		if ! ze_as_root chown root:root "$folder" || ! ze_as_root chmod 0755 "$folder"; then
+			ze_fail "could not make $folder belong to root"
+		fi
+	done
+	ze_as_root install -o root -g root -m 0755 "$ZE_WORK/zineticd" "$ZE_BIN_DIR/zineticd" ||
+		ze_fail "could not install zineticd into $ZE_BIN_DIR"
+	ze_as_root install -o root -g root -m 0755 "$ZE_WORK/zinetic" "$ZE_BIN_DIR/zinetic" ||
+		ze_fail "could not install zinetic into $ZE_BIN_DIR"
+	if ! ze_as_root mkdir -p "$(dirname "$ZE_CLI_LINK")" || ! ze_as_root ln -sfn "$ZE_BIN_DIR/zinetic" "$ZE_CLI_LINK"; then
+		ze_say "Could not link $ZE_CLI_LINK to $ZE_BIN_DIR/zinetic; run zinetic as \"$ZE_BIN_DIR/zinetic\"."
+	fi
+	if [ -f "$ZE_SYSTEMD_UNIT" ]; then
+		if ze_as_root "$ZE_BIN_DIR/zineticd" collector start </dev/null >/dev/null 2>&1; then
+			ze_say "Restarted the endpoint service with the new version."
+		else
+			ze_say "The endpoint service did not restart with the new version. Run: zinetic endpoint restart"
+		fi
 	fi
 }
 
@@ -120,7 +324,7 @@ ze_next_steps() {
 
 ze_main() {
 	local installed
-	case "$ZE_VERSION$ZE_PKG_SHA256" in
+	case "$ZE_VERSION$ZE_BASE_URL" in
 	*@*) ze_fail "this installer template has not been rendered for a release" ;;
 	esac
 	ze_check_platform
@@ -138,9 +342,10 @@ ze_main() {
 	fi
 	ZE_WORK="$(mktemp -d "${TMPDIR:-/tmp}/zinetic-endpoint.XXXXXX")"
 	trap ze_cleanup EXIT
-	ze_download "$ZE_WORK/$ZE_PKG"
-	ze_verify "$ZE_WORK/$ZE_PKG"
-	ze_install "$ZE_WORK/$ZE_PKG"
+	case "$ZE_OS" in
+	darwin) ze_install_macos ;;
+	linux) ze_install_linux ;;
+	esac
 	installed="$(ze_installed_version)"
 	if [ "$installed" != "$ZE_VERSION" ]; then
 		ze_fail "the package was installed, but $ZE_BIN_DIR/zinetic reports version ${installed:-none} instead of $ZE_VERSION"

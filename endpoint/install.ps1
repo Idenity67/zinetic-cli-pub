@@ -3,20 +3,24 @@
     $ErrorActionPreference = 'Stop'
     $ProgressPreference = 'SilentlyContinue'
 
-    $version = 'p1-04-uat-20261021-g7ff1a2d'
-    $baseUrl = 'https://github.com/Idenity67/zinetic-endpoint-pub/releases/download/p1-04-uat-20261021-g7ff1a2d'
+    $version = 'p1-04-uat-20261023-g588aa1f'
+    $baseUrl = 'https://github.com/Idenity67/zinetic-endpoint-pub/releases/download/p1-04-uat-20261023-g588aa1f'
     if ($env:ZINETIC_ENDPOINT_BASE_URL) {
         $baseUrl = $env:ZINETIC_ENDPOINT_BASE_URL
     }
     $baseUrl = $baseUrl.TrimEnd('/')
     $hashes = @{
-        'zinetic-windows-amd64.exe'  = '2f0c00f65cc741ae296b5fbc087f4c0dce4d54ad7c78e9890cc00318ce3db2ca'
-        'zineticd-windows-amd64.exe' = 'f23abb53a45ddb24343d715b829fed491758d3ca34b6903bb2f8acbd52045160'
-        'zinetic-windows-arm64.exe'  = '5e06af2559e227172c8057f773941b9faa494867a83f8b3ad72035a8f324b376'
-        'zineticd-windows-arm64.exe' = 'c05cf5c5c05ae491c475f2d2ee470299de1413c74cc660bd50ea457ec393c2b9'
+        'zinetic-windows-amd64.exe'  = 'e36cfbcd5f8705df1d719336712a6186f6070fb5b5388e55079a68f7ff904dcb'
+        'zineticd-windows-amd64.exe' = '1781baabd782945955f5fc2df2f72636bba5a102a0f73c5886c653b1806995e1'
+        'zinetic-windows-arm64.exe'  = '1dd67dd39585ce84c7b701b9083870b70d1a47f5b8f9064ea2b3e2b9a46e3db4'
+        'zineticd-windows-arm64.exe' = 'efc40d4e71226f566b98227f7a3da7d4fd3bff56127745a265828a8cae98f861'
     }
     $serviceName = 'ZineticEndpointCollector'
     $macCommand = 'curl -fsSL https://cli.zinetic.net/endpoint/install.sh | bash'
+    $installerUrl = 'https://cli.zinetic.net/endpoint/install.ps1'
+    if ($env:ZINETIC_ENDPOINT_WINDOWS_INSTALLER_URL) {
+        $installerUrl = $env:ZINETIC_ENDPOINT_WINDOWS_INSTALLER_URL
+    }
 
     function Stop-Installer([string]$message) {
         throw "zinetic installer: $message"
@@ -47,6 +51,53 @@
             $global:LASTEXITCODE = 0
         }
         return ''
+    }
+
+    function Write-NextSteps([string]$installDir) {
+        Write-Host ''
+        switch (Get-EndpointState $installDir) {
+            'ENROLLMENT_INCOMPLETE' {
+                Write-Host 'Setup has not finished on this device. To continue it, run:'
+                Write-Host '  zinetic endpoint setup'
+            }
+            { $_ -and $_ -notin @('NOT_INSTALLED', 'SETUP_REQUIRED', 'ENROLLMENT_INCOMPLETE') } {
+                Write-Host 'This device is already set up and keeps its enrollment. To see how the endpoint is doing, run:'
+                Write-Host '  zinetic endpoint status'
+            }
+            default {
+                Write-Host 'Next, set up this device:'
+                Write-Host '  zinetic endpoint setup'
+            }
+        }
+    }
+
+    function Invoke-Elevated([string]$installDir) {
+        Write-Host 'Installing needs administrator rights, so Windows will ask you to allow PowerShell to make changes.'
+        $prefix = ''
+        foreach ($name in 'ZINETIC_ENDPOINT_BASE_URL', 'ZINETIC_ENDPOINT_REINSTALL', 'ZINETIC_ENDPOINT_WINDOWS_INSTALLER_URL') {
+            $value = [Environment]::GetEnvironmentVariable($name, 'Process')
+            if ($value) {
+                $prefix += "`$env:$name = '" + $value.Replace("'", "''") + "'; "
+            }
+        }
+        $source = $installerUrl.Replace("'", "''")
+        $command = $prefix + "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; try { irm '$source' | iex; exit 0 } catch { Write-Host `$_.Exception.Message -ForegroundColor Red; Read-Host 'Press Enter to close this window'; exit 1 }"
+        $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
+        $shell = (Get-Process -Id $PID).Path
+        try {
+            $child = Start-Process -FilePath $shell -Verb RunAs -Wait -PassThru -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', $encoded)
+        } catch {
+            Stop-Installer 'Windows did not grant administrator rights, so nothing was installed. Run the command again and choose Yes, or open PowerShell with "Run as administrator".'
+        }
+        if ($child.ExitCode -ne 0) {
+            Stop-Installer "the installation in the administrator window did not finish (exit code $($child.ExitCode))"
+        }
+        $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User')
+        $installed = Get-InstalledVersion $installDir
+        if ($installed) {
+            Write-Host "Zinetic Endpoint $installed is installed in $installDir."
+        }
+        Write-NextSteps $installDir
     }
 
     function Get-InstalledVersion([string]$directory) {
@@ -95,6 +146,170 @@
         return $true
     }
 
+    $uninstallKey = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\ZineticEndpoint'
+    $uninstallScript = @'
+& {
+    Set-StrictMode -Version 2.0
+    $ErrorActionPreference = 'Stop'
+    $programFiles = $env:ProgramW6432
+    if (-not $programFiles) {
+        $programFiles = $env:ProgramFiles
+    }
+    $installDir = Join-Path $programFiles 'Zinetic'
+    $uninstallKey = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\ZineticEndpoint'
+
+    function Exit-Uninstaller([int]$code, [string]$message) {
+        if ($message) {
+            Write-Host $message -ForegroundColor Red
+            try {
+                Read-Host 'Press Enter to close this window' | Out-Null
+            } catch {
+                $null = $_
+            }
+        }
+        exit $code
+    }
+
+    if ($PSScriptRoot.TrimEnd('\') -ine $installDir) {
+        Exit-Uninstaller 1 "This uninstaller removes Zinetic Endpoint from $installDir and runs only from there."
+    }
+    $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+    if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+        try {
+            $child = Start-Process -FilePath (Get-Process -Id $PID).Path -Verb RunAs -Wait -PassThru `
+                -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`""
+        } catch {
+            Exit-Uninstaller 1 'Windows did not grant administrator rights, so Zinetic Endpoint was not removed.'
+        }
+        exit $child.ExitCode
+    }
+    Set-Location -LiteralPath $env:SystemRoot
+
+    function Invoke-AsLocalSystem([string]$daemon, [string]$log) {
+        $name = 'Zinetic Endpoint uninstall ' + [Guid]::NewGuid().ToString('N')
+        $arguments = '/d /s /c ""' + $daemon + '" collector uninstall --purge > "' + $log + '" 2>&1"'
+        $action = New-ScheduledTaskAction -Execute (Join-Path $env:SystemRoot 'System32\cmd.exe') -Argument $arguments
+        $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+        $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 5)
+        Register-ScheduledTask -TaskName $name -Action $action -Principal $principal -Settings $settings -Force | Out-Null
+        try {
+            Start-ScheduledTask -TaskName $name
+            $deadline = (Get-Date).AddMinutes(6)
+            do {
+                Start-Sleep -Milliseconds 500
+                $state = (Get-ScheduledTask -TaskName $name).State
+                $result = (Get-ScheduledTaskInfo -TaskName $name).LastTaskResult
+            } while ((($state -eq 'Running') -or ($state -eq 'Queued') -or ($result -eq 267011) -or ($result -eq 267009)) -and ((Get-Date) -lt $deadline))
+            if (($state -eq 'Running') -or ($result -eq 267011) -or ($result -eq 267009)) {
+                return -1
+            }
+            return [long]$result
+        } finally {
+            Unregister-ScheduledTask -TaskName $name -Confirm:$false -ErrorAction SilentlyContinue
+        }
+    }
+
+    Write-Host 'Removing Zinetic Endpoint'
+    $daemon = Join-Path $installDir 'zineticd.exe'
+    if (Test-Path -LiteralPath $daemon) {
+        Write-Host 'Removing the endpoint service, the device key, the state and the logs as LocalSystem'
+        $log = Join-Path $installDir 'uninstall.log'
+        $code = Invoke-AsLocalSystem $daemon $log
+        if (Test-Path -LiteralPath $log) {
+            Get-Content -LiteralPath $log | ForEach-Object { Write-Host "  $_" }
+            Remove-Item -LiteralPath $log -Force -ErrorAction SilentlyContinue
+        }
+        if ($code -ne 0) {
+            Write-Warning "zineticd could not remove everything (exit code $code); the program files are removed anyway. If this device was enrolled, ask your administrator to revoke it in the Zinetic console."
+        }
+    }
+    $status = Join-Path $env:ProgramData 'Zinetic\Endpoint'
+    Remove-Item -LiteralPath $status -Recurse -Force -ErrorAction SilentlyContinue
+    $data = Join-Path $env:ProgramData 'Zinetic'
+    if ((Test-Path -LiteralPath $data) -and -not (Get-ChildItem -LiteralPath $data -Force)) {
+        Remove-Item -LiteralPath $data -Force -ErrorAction SilentlyContinue
+    }
+
+    foreach ($name in @('zinetic.exe', 'zineticd.exe')) {
+        $file = Join-Path $installDir $name
+        for ($attempt = 1; (Test-Path -LiteralPath $file) -and ($attempt -le 10); $attempt++) {
+            try {
+                Remove-Item -LiteralPath $file -Force
+            } catch {
+                if ($attempt -eq 10) {
+                    Exit-Uninstaller 1 "could not remove $($file): $($_.Exception.Message)"
+                }
+                Start-Sleep -Seconds 1
+            }
+        }
+    }
+
+    $key = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SYSTEM\CurrentControlSet\Control\Session Manager\Environment', $true)
+    try {
+        $raw = [string]$key.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+        $entries = @($raw -split ';' | Where-Object { $_ -ne '' })
+        $kept = @($entries | Where-Object { $_.Trim().TrimEnd('\') -ine $installDir })
+        if ($kept.Count -ne $entries.Count) {
+            $key.SetValue('Path', ($kept -join ';'), [Microsoft.Win32.RegistryValueKind]::ExpandString)
+            Write-Host "Removed $installDir from the system PATH."
+        }
+    } finally {
+        $key.Close()
+    }
+    try {
+        if (-not ('ZineticUninstaller.Native' -as [type])) {
+            Add-Type -Namespace ZineticUninstaller -Name Native -MemberDefinition '[DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint msg, UIntPtr wParam, string lParam, uint flags, uint timeout, out UIntPtr result);'
+        }
+        $result = [UIntPtr]::Zero
+        [void][ZineticUninstaller.Native]::SendMessageTimeout([IntPtr]0xffff, 0x1A, [UIntPtr]::Zero, 'Environment', 2, 5000, [ref]$result)
+    } catch {
+        $null = $_
+    }
+
+    Remove-Item -LiteralPath $uninstallKey -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue
+    if (-not (Get-ChildItem -LiteralPath $installDir -Force -ErrorAction SilentlyContinue)) {
+        Remove-Item -LiteralPath $installDir -Force -ErrorAction SilentlyContinue
+    }
+    Write-Host 'Zinetic Endpoint was removed from this device.'
+    exit 0
+}
+'@
+
+    function Register-Uninstaller([string]$installDir) {
+        $script = Join-Path $installDir 'uninstall.ps1'
+        [IO.File]::WriteAllText($script, $uninstallScript, (New-Object Text.UTF8Encoding($true)))
+        $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+        $command = "`"$powershell`" -NoProfile -ExecutionPolicy Bypass -File `"$script`""
+        $size = 0
+        foreach ($name in @('zinetic.exe', 'zineticd.exe')) {
+            $file = Join-Path $installDir $name
+            if (Test-Path -LiteralPath $file) {
+                $size += (Get-Item -LiteralPath $file).Length
+            }
+        }
+        if (-not (Test-Path -LiteralPath $uninstallKey)) {
+            New-Item -Path $uninstallKey -Force | Out-Null
+        }
+        $values = [ordered]@{
+            'DisplayName'     = 'Zinetic Endpoint'
+            'DisplayVersion'  = $version
+            'Publisher'       = 'Zinetic'
+            'InstallLocation' = $installDir
+            'DisplayIcon'     = (Join-Path $installDir 'zinetic.exe')
+            'UninstallString' = $command
+            'URLInfoAbout'    = 'https://zinetic.net'
+            'Comments'        = "Run 'zinetic endpoint uninstall' first to revoke this endpoint on the Zinetic platform."
+        }
+        foreach ($name in $values.Keys) {
+            New-ItemProperty -Path $uninstallKey -Name $name -Value $values[$name] -PropertyType String -Force | Out-Null
+        }
+        foreach ($name in @('NoModify', 'NoRepair')) {
+            New-ItemProperty -Path $uninstallKey -Name $name -Value 1 -PropertyType DWord -Force | Out-Null
+        }
+        New-ItemProperty -Path $uninstallKey -Name 'EstimatedSize' -Value ([int][Math]::Ceiling($size / 1KB)) -PropertyType DWord -Force | Out-Null
+    }
+
     function Copy-Program([string]$source, [string]$destination) {
         for ($attempt = 1; $attempt -le 10; $attempt++) {
             try {
@@ -113,11 +328,17 @@
         Stop-Installer 'this installer template has not been rendered for a release'
     }
     if ($env:OS -ne 'Windows_NT') {
-        Stop-Installer "this installer is for Windows; on macOS run: $macCommand"
+        Stop-Installer "this installer is for Windows; on macOS or Linux run: $macCommand"
     }
+    $programFiles = $env:ProgramW6432
+    if (-not $programFiles) {
+        $programFiles = $env:ProgramFiles
+    }
+    $installDir = Join-Path $programFiles 'Zinetic'
     $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
     if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-        Stop-Installer 'administrator rights are needed. Open PowerShell with "Run as administrator" and run the command again.'
+        Invoke-Elevated $installDir
+        return
     }
     try {
         [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
@@ -126,11 +347,6 @@
     }
 
     $arch = Get-EndpointArchitecture
-    $programFiles = $env:ProgramW6432
-    if (-not $programFiles) {
-        $programFiles = $env:ProgramFiles
-    }
-    $installDir = Join-Path $programFiles 'Zinetic'
     $installed = Get-InstalledVersion $installDir
 
     if (($installed -eq $version) -and ($env:ZINETIC_ENDPOINT_REINSTALL -ne '1') -and (Test-Path -LiteralPath (Join-Path $installDir 'zineticd.exe'))) {
@@ -195,6 +411,7 @@
     if (Add-MachinePath $installDir) {
         Write-Host "Added $installDir to the system PATH. Terminal windows that were already open need to be reopened."
     }
+    Register-Uninstaller $installDir
     $onPath = $false
     foreach ($entry in @($env:Path -split ';')) {
         if ($entry -and (Test-SamePath $entry $installDir)) {
@@ -205,19 +422,5 @@
         $env:Path = "$env:Path;$installDir"
     }
 
-    Write-Host ''
-    switch (Get-EndpointState $installDir) {
-        'ENROLLMENT_INCOMPLETE' {
-            Write-Host 'Setup has not finished on this device. To continue it, run:'
-            Write-Host '  zinetic endpoint setup'
-        }
-        { $_ -and $_ -notin @('NOT_INSTALLED', 'SETUP_REQUIRED', 'ENROLLMENT_INCOMPLETE') } {
-            Write-Host 'This device is already set up and keeps its enrollment. To see how the endpoint is doing, run:'
-            Write-Host '  zinetic endpoint status'
-        }
-        default {
-            Write-Host 'Next, set up this device:'
-            Write-Host '  zinetic endpoint setup'
-        }
-    }
+    Write-NextSteps $installDir
 }
