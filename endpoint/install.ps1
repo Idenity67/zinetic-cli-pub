@@ -3,17 +3,17 @@
     $ErrorActionPreference = 'Stop'
     $ProgressPreference = 'SilentlyContinue'
 
-    $version = 'p1-04-uat-20261024-g79a777c'
-    $baseUrl = 'https://github.com/Idenity67/zinetic-endpoint-pub/releases/download/p1-04-uat-20261024-g79a777c'
+    $version = 'p1-04-uat-20261024-g6d84500'
+    $baseUrl = 'https://github.com/Idenity67/zinetic-endpoint-pub/releases/download/p1-04-uat-20261024-g6d84500'
     if ($env:ZINETIC_ENDPOINT_BASE_URL) {
         $baseUrl = $env:ZINETIC_ENDPOINT_BASE_URL
     }
     $baseUrl = $baseUrl.TrimEnd('/')
     $hashes = @{
-        'zinetic-windows-amd64.exe'  = '4f06e094d3e4316591177a882e944e9f25d6834fd2a618b4cd2d0e5099f86484'
-        'zineticd-windows-amd64.exe' = '5e71620c7d99663e7e940734fec055afa5e455575830fdaf6446f88f207ed5ac'
-        'zinetic-windows-arm64.exe'  = '957bb008c70b1d610cdcdfa3009d7eb5b3d799b4983db507c8dcf1df91f4748e'
-        'zineticd-windows-arm64.exe' = '0c82a1b02f7eaa6bc7c139f7ec66bfbbadb4383485d8e45a3a26c5cd38c9abf3'
+        'zinetic-windows-amd64.exe'  = '002bcb1ac66ef7356691ca71cf1e86ed47f037e12ca0bfcef8506e5f8f70e4fc'
+        'zineticd-windows-amd64.exe' = 'f16fead7c0e6ca0a770bb1b89043bc88709feff718414306f2b733c935a1f795'
+        'zinetic-windows-arm64.exe'  = '89579c5e8c7eebac69ce41b4e5c03baf611764b87a6d0ee39fcdf54210c3bdf2'
+        'zineticd-windows-arm64.exe' = '5e989da309169ae1ee382561523d5a8cc62651647fd1f567df092f21f70b4948'
     }
     $serviceName = 'ZineticEndpointCollector'
     $macCommand = 'curl -fsSL https://cli.zinetic.net/endpoint/install.sh | bash'
@@ -243,6 +243,9 @@
             }
         }
     }
+    foreach ($old in @(Get-ChildItem -LiteralPath $installDir -Filter '*.exe.old-*' -File -Force -ErrorAction SilentlyContinue)) {
+        Remove-Item -LiteralPath $old.FullName -Force -ErrorAction SilentlyContinue
+    }
 
     $key = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SYSTEM\CurrentControlSet\Control\Session Manager\Environment', $true)
     try {
@@ -310,6 +313,25 @@
         New-ItemProperty -Path $uninstallKey -Name 'EstimatedSize' -Value ([int][Math]::Ceiling($size / 1KB)) -PropertyType DWord -Force | Out-Null
     }
 
+    function Remove-ReplacedPrograms([string]$directory) {
+        foreach ($old in @(Get-ChildItem -LiteralPath $directory -Filter '*.exe.old-*' -File -Force -ErrorAction SilentlyContinue)) {
+            Remove-Item -LiteralPath $old.FullName -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    function Move-ProgramAside([string]$path) {
+        if (-not (Test-Path -LiteralPath $path)) {
+            return $false
+        }
+        $aside = (Split-Path -Leaf $path) + '.old-' + [Guid]::NewGuid().ToString('N')
+        try {
+            Rename-Item -LiteralPath $path -NewName $aside -Force
+            return $true
+        } catch {
+            return $false
+        }
+    }
+
     function Copy-Program([string]$source, [string]$destination) {
         for ($attempt = 1; $attempt -le 10; $attempt++) {
             try {
@@ -319,7 +341,9 @@
                 if ($attempt -eq 10) {
                     Stop-Installer "could not replace $($destination): $($_.Exception.Message)"
                 }
-                Start-Sleep -Seconds 1
+                if (-not (Move-ProgramAside $destination)) {
+                    Start-Sleep -Seconds 1
+                }
             }
         }
     }
@@ -386,6 +410,7 @@
             if (-not (Test-Path -LiteralPath $installDir)) {
                 New-Item -ItemType Directory -Path $installDir | Out-Null
             }
+            Remove-ReplacedPrograms $installDir
             foreach ($name in @('zinetic', 'zineticd')) {
                 Copy-Program (Join-Path $work "$name-windows-$arch.exe") (Join-Path $installDir "$name.exe")
             }
