@@ -3,17 +3,17 @@
     $ErrorActionPreference = 'Stop'
     $ProgressPreference = 'SilentlyContinue'
 
-    $version = 'p1-04-uat-20261024-g83a789d'
-    $baseUrl = 'https://github.com/Idenity67/zinetic-endpoint-pub/releases/download/p1-04-uat-20261024-g83a789d'
+    $version = 'p1-04-uat-20261024-gf8a4ffc'
+    $baseUrl = 'https://github.com/Idenity67/zinetic-endpoint-pub/releases/download/p1-04-uat-20261024-gf8a4ffc'
     if ($env:ZINETIC_ENDPOINT_BASE_URL) {
         $baseUrl = $env:ZINETIC_ENDPOINT_BASE_URL
     }
     $baseUrl = $baseUrl.TrimEnd('/')
     $hashes = @{
-        'zinetic-windows-amd64.exe'  = 'd424bbe363251fb9d2a3565943d56e7039f6203eae039e1b865d54c475f52017'
-        'zineticd-windows-amd64.exe' = 'd79ca667fc1d764d0ea7f45fe05e4ed2821c0afcc71629d8b7ad63e6ff7b4cb4'
-        'zinetic-windows-arm64.exe'  = '2f5ed59188fd9f0122782be106875e9350ea338be4baffebd28a6010844a325d'
-        'zineticd-windows-arm64.exe' = '1f286efa671428b589481e15980db5423cbb2ab12c121a6e1a6e7623327d1546'
+        'zinetic-windows-amd64.exe'  = '583594b29281af1ab6427d3992b5b1914802bdd39784ffefeaa923146af6dca3'
+        'zineticd-windows-amd64.exe' = 'a010143c9a47dbe6e5e5ae18f9516a3a57b1e80a17860db84236dd1664e6c53d'
+        'zinetic-windows-arm64.exe'  = '7d06b3977321558d7c894676ecf30af0b271b413ae6667020b29a664d987ff63'
+        'zineticd-windows-arm64.exe' = '9d2a98e38516ac8f523b4f41f395c4bc081f2d3c8b588caef48003a83e35fa18'
     }
     $serviceName = 'ZineticEndpointCollector'
     $macCommand = 'curl -fsSL https://cli.zinetic.net/endpoint/install.sh | bash'
