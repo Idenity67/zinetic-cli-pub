@@ -3,19 +3,22 @@
     $ErrorActionPreference = 'Stop'
     $ProgressPreference = 'SilentlyContinue'
 
-    $version = 'p1-04-uat-20261024-gf8a4ffc'
-    $baseUrl = 'https://github.com/Idenity67/zinetic-endpoint-pub/releases/download/p1-04-uat-20261024-gf8a4ffc'
+    $version = 'p1-04-uat-20261025-g91abefa'
+    $baseUrl = 'https://github.com/Idenity67/zinetic-endpoint-pub/releases/download/p1-04-uat-20261025-g91abefa'
     if ($env:ZINETIC_ENDPOINT_BASE_URL) {
         $baseUrl = $env:ZINETIC_ENDPOINT_BASE_URL
     }
     $baseUrl = $baseUrl.TrimEnd('/')
     $hashes = @{
-        'zinetic-windows-amd64.exe'  = '583594b29281af1ab6427d3992b5b1914802bdd39784ffefeaa923146af6dca3'
-        'zineticd-windows-amd64.exe' = 'a010143c9a47dbe6e5e5ae18f9516a3a57b1e80a17860db84236dd1664e6c53d'
-        'zinetic-windows-arm64.exe'  = '7d06b3977321558d7c894676ecf30af0b271b413ae6667020b29a664d987ff63'
-        'zineticd-windows-arm64.exe' = '9d2a98e38516ac8f523b4f41f395c4bc081f2d3c8b588caef48003a83e35fa18'
+        'zinetic-windows-amd64.exe'  = '357c1dd863c13e94f20a117ac05da63bed83552721649cea6efaefa5334832e5'
+        'zineticd-windows-amd64.exe' = '632ceec288e9c0c876190a860697a8074bca7d50b2fcdc1c079ee505f2cd1c4c'
+        'zinetic-windows-arm64.exe'  = 'bccb7c1cf308e78548fcfb3aa87c2b3de71bb5559430d779948faada9ccebdc6'
+        'zineticd-windows-arm64.exe' = '300090b44ac1098aae60621f49a59f35aa56e8b71922d50883840ec85565ab53'
     }
     $serviceName = 'ZineticEndpointCollector'
+    $serviceWaitSeconds = 90
+    $servicePollSeconds = 3
+    $datedRelease = '^(.+)-([0-9]{8})-g[0-9a-f]{7,40}$'
     $macCommand = 'curl -fsSL https://cli.zinetic.net/endpoint/install.sh | bash'
     $installerUrl = 'https://cli.zinetic.net/endpoint/install.ps1'
     if ($env:ZINETIC_ENDPOINT_WINDOWS_INSTALLER_URL) {
@@ -53,7 +56,41 @@
         return ''
     }
 
-    function Write-NextSteps([string]$installDir) {
+    function Test-ServiceOnRelease([string]$installDir) {
+        $cli = Join-Path $installDir 'zinetic.exe'
+        if (-not (Test-Path -LiteralPath $cli)) {
+            return $false
+        }
+        try {
+            $json = & $cli endpoint status --json 2>$null
+            $global:LASTEXITCODE = 0
+            $view = $json | Out-String | ConvertFrom-Json
+            $outdated = @($view.problems | Where-Object { $_.code -eq 'SERVICE_OUTDATED' })
+            return ($view.service.running -eq $true) -and ($view.daemon_version -ceq $version) -and ($outdated.Count -eq 0)
+        } catch {
+            $global:LASTEXITCODE = 0
+            return $false
+        }
+    }
+
+    function Wait-ServiceOnRelease([string]$installDir, [int]$seconds) {
+        $deadline = (Get-Date).AddSeconds($seconds)
+        if (Test-ServiceOnRelease $installDir) {
+            return $true
+        }
+        if ($seconds -gt 0) {
+            Write-Host "Waiting up to $seconds seconds for the endpoint service to start Zinetic Endpoint $version"
+        }
+        while ((Get-Date) -lt $deadline) {
+            Start-Sleep -Seconds $servicePollSeconds
+            if (Test-ServiceOnRelease $installDir) {
+                return $true
+            }
+        }
+        return $false
+    }
+
+    function Write-NextSteps([string]$installDir, $serviceWait = $null) {
         Write-Host ''
         switch (Get-EndpointState $installDir) {
             'ENROLLMENT_INCOMPLETE' {
@@ -61,8 +98,16 @@
                 Write-Host '  zinetic endpoint setup'
             }
             { $_ -and $_ -notin @('NOT_INSTALLED', 'SETUP_REQUIRED', 'ENROLLMENT_INCOMPLETE') } {
-                Write-Host 'This device is already set up and keeps its enrollment. To see how the endpoint is doing, run:'
-                Write-Host '  zinetic endpoint status'
+                if (($null -ne $serviceWait) -and -not (Wait-ServiceOnRelease $installDir $serviceWait)) {
+                    Write-Warning "the endpoint service is not running Zinetic Endpoint $version, so this device may not be protected until it does. The device keeps its enrollment."
+                    Write-Host 'To see what the service is doing, run:'
+                    Write-Host '  zinetic endpoint status'
+                    Write-Host "If it does not show the service running $version, restart it:"
+                    Write-Host '  zinetic endpoint restart'
+                } else {
+                    Write-Host 'This device is already set up and keeps its enrollment. To see how the endpoint is doing, run:'
+                    Write-Host '  zinetic endpoint status'
+                }
             }
             default {
                 Write-Host 'Next, set up this device:'
@@ -71,10 +116,10 @@
         }
     }
 
-    function Invoke-Elevated([string]$installDir) {
+    function Invoke-Elevated([string]$installDir, [string]$before) {
         Write-Host 'Installing needs administrator rights, so Windows will ask you to allow PowerShell to make changes.'
         $prefix = ''
-        foreach ($name in 'ZINETIC_ENDPOINT_BASE_URL', 'ZINETIC_ENDPOINT_REINSTALL', 'ZINETIC_ENDPOINT_WINDOWS_INSTALLER_URL') {
+        foreach ($name in 'ZINETIC_ENDPOINT_BASE_URL', 'ZINETIC_ENDPOINT_REINSTALL', 'ZINETIC_ENDPOINT_ALLOW_DOWNGRADE', 'ZINETIC_ENDPOINT_WINDOWS_INSTALLER_URL') {
             $value = [Environment]::GetEnvironmentVariable($name, 'Process')
             if ($value) {
                 $prefix += "`$env:$name = '" + $value.Replace("'", "''") + "'; "
@@ -97,7 +142,11 @@
         if ($installed) {
             Write-Host "Zinetic Endpoint $installed is installed in $installDir."
         }
-        Write-NextSteps $installDir
+        if (($installed -cne $before) -or ($env:ZINETIC_ENDPOINT_REINSTALL -eq '1')) {
+            Write-NextSteps $installDir 0
+        } else {
+            Write-NextSteps $installDir
+        }
     }
 
     function Get-InstalledVersion([string]$directory) {
@@ -114,6 +163,15 @@
             return $Matches[1]
         }
         return ''
+    }
+
+    function Test-NewerInstalled([string]$installed) {
+        $have = [regex]::Match($installed, $datedRelease)
+        $want = [regex]::Match($version, $datedRelease)
+        if (-not ($have.Success -and $want.Success)) {
+            return $false
+        }
+        return ($have.Groups[1].Value -ceq $want.Groups[1].Value) -and ([string]::CompareOrdinal($have.Groups[2].Value, $want.Groups[2].Value) -gt 0)
     }
 
     function Test-SamePath([string]$a, [string]$b) {
@@ -359,9 +417,14 @@
         $programFiles = $env:ProgramFiles
     }
     $installDir = Join-Path $programFiles 'Zinetic'
+    $installed = Get-InstalledVersion $installDir
+    $downgrade = Test-NewerInstalled $installed
+    if ($downgrade -and ($env:ZINETIC_ENDPOINT_ALLOW_DOWNGRADE -ne '1')) {
+        Stop-Installer ("this device runs Zinetic Endpoint $installed, which is newer than $version, so nothing was changed. To install $version anyway, set " + '$env:ZINETIC_ENDPOINT_ALLOW_DOWNGRADE = "1"' + ' and run the installer again.')
+    }
     $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
     if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-        Invoke-Elevated $installDir
+        Invoke-Elevated $installDir $installed
         return
     }
     try {
@@ -371,13 +434,18 @@
     }
 
     $arch = Get-EndpointArchitecture
-    $installed = Get-InstalledVersion $installDir
+    $serviceWait = $null
 
     if (($installed -eq $version) -and ($env:ZINETIC_ENDPOINT_REINSTALL -ne '1') -and (Test-Path -LiteralPath (Join-Path $installDir 'zineticd.exe'))) {
         Write-Host "Zinetic Endpoint $version is already installed in $installDir."
         Write-Host 'To install it again, set $env:ZINETIC_ENDPOINT_REINSTALL = "1" and run the installer again.'
     } else {
-        if ($installed -and ($installed -ne $version)) {
+        if ($env:ZINETIC_ENDPOINT_SKIP_SERVICE_WAIT -ne '1') {
+            $serviceWait = $serviceWaitSeconds
+        }
+        if ($downgrade) {
+            Write-Host "Downgrading Zinetic Endpoint from $installed to $version ($arch)"
+        } elseif ($installed -and ($installed -ne $version)) {
             Write-Host "Upgrading Zinetic Endpoint from $installed to $version ($arch)"
         } else {
             Write-Host "Installing Zinetic Endpoint $version ($arch)"
@@ -447,5 +515,5 @@
         $env:Path = "$env:Path;$installDir"
     }
 
-    Write-NextSteps $installDir
+    Write-NextSteps $installDir $serviceWait
 }

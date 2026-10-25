@@ -1,15 +1,15 @@
 #!/bin/bash
 set -euo pipefail
 
-ZE_VERSION="p1-04-uat-20261024-gf8a4ffc"
-ZE_BASE_URL="${ZINETIC_ENDPOINT_BASE_URL:-https://github.com/Idenity67/zinetic-endpoint-pub/releases/download/p1-04-uat-20261024-gf8a4ffc}"
+ZE_VERSION="p1-04-uat-20261025-g91abefa"
+ZE_BASE_URL="${ZINETIC_ENDPOINT_BASE_URL:-https://github.com/Idenity67/zinetic-endpoint-pub/releases/download/p1-04-uat-20261025-g91abefa}"
 ZE_BASE_URL="${ZE_BASE_URL%/}"
-ZE_PKG="Zinetic-Endpoint-p1-04-uat-20261024-gf8a4ffc.pkg"
-ZE_PKG_SHA256="50c5d6e3ec91a503b116f280c003ed9c9e3a40690668879410f8cd6c205c9186"
-ZE_LINUX_SHA256_ZINETIC_AMD64="f7402eee8eec3e6003215688d266c65be0bb4b5c191008cd94934867ee654403"
-ZE_LINUX_SHA256_ZINETICD_AMD64="2a6fdf5ab8751f529763f76769d5a7d9077248f8be67a0cbae1f991ddff0b524"
-ZE_LINUX_SHA256_ZINETIC_ARM64="7d85a5f975687600e5f3aa74f3c247ec674f4da3955bff2971d8ca6c689eb819"
-ZE_LINUX_SHA256_ZINETICD_ARM64="c9bee6bce87cc0870bcd6e64680b0aab47ba30248f7b0f453f2979178aeacf7c"
+ZE_PKG="Zinetic-Endpoint-p1-04-uat-20261025-g91abefa.pkg"
+ZE_PKG_SHA256="26321c20a7ff1d5a884c014dc3331b05fed77d66961c4981d48219589bb46aaf"
+ZE_LINUX_SHA256_ZINETIC_AMD64="5cc4527a89fd05958ee160f6329e6fb67205b873c65d46f347552cf802476330"
+ZE_LINUX_SHA256_ZINETICD_AMD64="3cea21e33237686131247e1cb0d435d266b17c9aa26cbd15049a00c060c7c17e"
+ZE_LINUX_SHA256_ZINETIC_ARM64="ca976ee2a93ad416c0d6781360f5dd06d4129c35fc996e8cfb3339deec7410d8"
+ZE_LINUX_SHA256_ZINETICD_ARM64="345429455e46ff7a5a7fe0a71750c2560bca67221dbb20aa24b8ea82bb7b4da9"
 ZE_MACOS_BIN_DIR="/Library/Application Support/Zinetic/bin"
 ZE_LINUX_BIN_DIR="/opt/zinetic/bin"
 ZE_CLI_LINK="/usr/local/bin/zinetic"
@@ -19,6 +19,8 @@ ZE_SYSTEMD_CREDS="/usr/bin/systemd-creds /bin/systemd-creds"
 ZE_WSL_RELEASE="/proc/sys/kernel/osrelease"
 ZE_WINDOWS_INSTALLER="${ZINETIC_ENDPOINT_WINDOWS_INSTALLER_URL:-https://cli.zinetic.net/endpoint/install.ps1}"
 ZE_WINDOWS_COMMAND="irm $ZE_WINDOWS_INSTALLER | iex"
+ZE_SERVICE_WAIT_SECONDS=90
+ZE_SERVICE_POLL_SECONDS=3
 ZE_OS=""
 ZE_ARCH=""
 ZE_BIN_DIR="$ZE_MACOS_BIN_DIR"
@@ -201,6 +203,23 @@ ze_installed_version() {
 	fi
 }
 
+ze_release_line() {
+	printf '%s\n' "$1" | sed -n 's/^\(..*\)-[0-9]\{8\}-g[0-9a-f]\{7,40\}$/\1/p'
+}
+
+ze_release_date() {
+	printf '%s\n' "$1" | sed -n 's/^..*-\([0-9]\{8\}\)-g[0-9a-f]\{7,40\}$/\1/p'
+}
+
+ze_installed_is_newer() {
+	local installed="$1" installed_date release_date
+	installed_date="$(ze_release_date "$installed")"
+	release_date="$(ze_release_date "$ZE_VERSION")"
+	[ -n "$installed_date" ] && [ -n "$release_date" ] &&
+		[ "$(ze_release_line "$installed")" = "$(ze_release_line "$ZE_VERSION")" ] &&
+		[ "$installed_date" -gt "$release_date" ]
+}
+
 ze_sha256() {
 	if command -v sha256sum >/dev/null 2>&1; then
 		sha256sum "$1" | awk '{ print $1 }'
@@ -296,14 +315,48 @@ ze_command_name() {
 	fi
 }
 
+ze_status_json() {
+	"$ZE_BIN_DIR/zinetic" endpoint status --json 2>/dev/null || true
+}
+
 ze_endpoint_state() {
 	local view
-	view="$("$ZE_BIN_DIR/zinetic" endpoint status --json 2>/dev/null || true)"
+	view="$(ze_status_json)"
 	printf '%s\n' "$view" | sed -n 's/.*"state":"\([A-Z_]*\)".*/\1/p' | head -n 1
 }
 
+ze_service_runs_release() {
+	local view service daemon
+	view="$(ze_status_json)"
+	service="$(printf '%s\n' "$view" | sed -n 's/.*"service":{\([^}]*\)}.*/\1/p' | head -n 1)"
+	daemon="$(printf '%s\n' "$view" | sed -n 's/.*"daemon_version":"\([^"]*\)".*/\1/p' | head -n 1)"
+	case "$service" in
+	*'"running":true'*) ;;
+	*) return 1 ;;
+	esac
+	case "$view" in
+	*'"code":"SERVICE_OUTDATED"'*) return 1 ;;
+	esac
+	[ "$daemon" = "$ZE_VERSION" ]
+}
+
+ze_wait_for_service() {
+	local deadline=$((SECONDS + ZE_SERVICE_WAIT_SECONDS))
+	if ze_service_runs_release; then
+		return 0
+	fi
+	ze_say "Waiting up to $ZE_SERVICE_WAIT_SECONDS seconds for the endpoint service to start Zinetic Endpoint $ZE_VERSION"
+	while [ "$SECONDS" -lt "$deadline" ]; do
+		sleep "$ZE_SERVICE_POLL_SECONDS"
+		if ze_service_runs_release; then
+			return 0
+		fi
+	done
+	return 1
+}
+
 ze_next_steps() {
-	local state
+	local moment="${1:-}" state
 	state="$(ze_endpoint_state)"
 	ze_say ""
 	case "$state" in
@@ -316,8 +369,15 @@ ze_next_steps() {
 		ze_say "  $(ze_command_name) endpoint setup"
 		;;
 	*)
-		ze_say "This device is already set up and keeps its enrollment. To see how the endpoint is doing, run:"
-		ze_say "  $(ze_command_name) endpoint status"
+		if [ "$moment" = after-install ] && [ "${ZINETIC_ENDPOINT_SKIP_SERVICE_WAIT:-}" != 1 ] && ! ze_wait_for_service; then
+			ze_say "Warning: the endpoint service did not come back on Zinetic Endpoint $ZE_VERSION within $ZE_SERVICE_WAIT_SECONDS seconds, so this device may not be protected until it does. The device keeps its enrollment. To see what the service is doing, run:"
+			ze_say "  $(ze_command_name) endpoint status"
+			ze_say "If it does not show the service running $ZE_VERSION, restart it:"
+			ze_say "  $(ze_command_name) endpoint restart"
+		else
+			ze_say "This device is already set up and keeps its enrollment. To see how the endpoint is doing, run:"
+			ze_say "  $(ze_command_name) endpoint status"
+		fi
 		;;
 	esac
 }
@@ -336,7 +396,13 @@ ze_main() {
 		return 0
 	fi
 	if [ -n "$installed" ] && [ "$installed" != "$ZE_VERSION" ]; then
-		ze_say "Upgrading Zinetic Endpoint from $installed to $ZE_VERSION"
+		if ! ze_installed_is_newer "$installed"; then
+			ze_say "Upgrading Zinetic Endpoint from $installed to $ZE_VERSION"
+		elif [ "${ZINETIC_ENDPOINT_ALLOW_DOWNGRADE:-0}" = "1" ]; then
+			ze_say "Downgrading Zinetic Endpoint from $installed to $ZE_VERSION"
+		else
+			ze_fail "this device runs Zinetic Endpoint $installed, which is newer than $ZE_VERSION, so nothing was changed. To install $ZE_VERSION anyway, run the installer with ZINETIC_ENDPOINT_ALLOW_DOWNGRADE=1."
+		fi
 	else
 		ze_say "Installing Zinetic Endpoint $ZE_VERSION"
 	fi
@@ -352,7 +418,7 @@ ze_main() {
 	fi
 	ze_say ""
 	ze_say "Zinetic Endpoint $ZE_VERSION is installed."
-	ze_next_steps
+	ze_next_steps after-install
 }
 
 ze_main "$@"
