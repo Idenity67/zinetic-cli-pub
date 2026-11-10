@@ -3,17 +3,17 @@
     $ErrorActionPreference = 'Stop'
     $ProgressPreference = 'SilentlyContinue'
 
-    $version = '0.6.0-beta.1'
-    $baseUrl = 'https://github.com/Idenity67/zinetic-endpoint-pub/releases/download/v0.6.0-beta.1'
+    $version = '0.6.0-beta.2'
+    $baseUrl = 'https://github.com/Idenity67/zinetic-endpoint-pub/releases/download/v0.6.0-beta.2'
     if ($env:ZINETIC_ENDPOINT_BASE_URL) {
         $baseUrl = $env:ZINETIC_ENDPOINT_BASE_URL
     }
     $baseUrl = $baseUrl.TrimEnd('/')
     $hashes = @{
-        'zinetic-windows-amd64.exe'  = '15b48fec8d2161f57784ffa56c28e9f0a5fe144058b5e936630ee6c0f7c72b49'
-        'zineticd-windows-amd64.exe' = '3a2efc694cc230fc6f0ad0bb18d61768810b419e0a2cddeb514b4992d5a90690'
-        'zinetic-windows-arm64.exe'  = 'b21ca566082fc55f093a0c5f465931ec818fbaf919e336377d36e7961ea82d60'
-        'zineticd-windows-arm64.exe' = 'c9e3ccac3dbaeb379393931cffb9bf715e3cd9c6053b7796c865acf7568ccc7b'
+        'zinetic-windows-amd64.exe'  = '3341d04370980f4c52dd2b2b236d7190287745aeadec1678013f287dcfb23254'
+        'zineticd-windows-amd64.exe' = 'a8b9c01e7b9df58a54bbba774df9f29f2a2f0902f4a07e55207225e019b8be98'
+        'zinetic-windows-arm64.exe'  = 'e9736af512b445f3423f6e3a146bdd948472840740c5a6cf416bfef8b5688156'
+        'zineticd-windows-arm64.exe' = '2f9ca45a8e015793ed21d5c60f54e4445fc7f42396348b1a1d15becd99543682'
     }
     $serviceName = 'ZineticEndpointCollector'
     $serviceWaitSeconds = 90
@@ -232,7 +232,7 @@
         if ($haveSemantic -and $wantSemantic) {
             return (Compare-SemanticVersion $haveSemantic $wantSemantic) -gt 0
         }
-        if ($haveSemantic -and [regex]::IsMatch($version, $datedRelease)) {
+        if ($haveSemantic) {
             return $true
         }
         $have = [regex]::Match($installed, $datedRelease)

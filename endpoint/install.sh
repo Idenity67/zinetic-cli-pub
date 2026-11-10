@@ -1,15 +1,15 @@
 #!/bin/bash
 set -euo pipefail
 
-ZE_VERSION="0.6.0-beta.1"
-ZE_BASE_URL="${ZINETIC_ENDPOINT_BASE_URL:-https://github.com/Idenity67/zinetic-endpoint-pub/releases/download/v0.6.0-beta.1}"
+ZE_VERSION="0.6.0-beta.2"
+ZE_BASE_URL="${ZINETIC_ENDPOINT_BASE_URL:-https://github.com/Idenity67/zinetic-endpoint-pub/releases/download/v0.6.0-beta.2}"
 ZE_BASE_URL="${ZE_BASE_URL%/}"
-ZE_PKG="Zinetic-Endpoint-0.6.0-beta.1.pkg"
-ZE_PKG_SHA256="550376a12b18b42f7af309c39ed43ae0943c557652ebd8ff7ba1444a05373d3a"
-ZE_LINUX_SHA256_ZINETIC_AMD64="4fdd7f322327d3bcc6ae4da5772e291ef44bd6ac4b737ae4887b6fd1e0f58078"
-ZE_LINUX_SHA256_ZINETICD_AMD64="c42e0416f2c2733081fe3ed70ffed7c5336537f0cfad2b8f2dfae51cd2572d74"
-ZE_LINUX_SHA256_ZINETIC_ARM64="34d2f6f3719bf9e30cabc9b4c14963d9710016e2a294521148b107328d3d898d"
-ZE_LINUX_SHA256_ZINETICD_ARM64="736b2557f1b07402e0956a0f224006142a13818f7b0a6dc22a2f7ce51873d7e6"
+ZE_PKG="Zinetic-Endpoint-0.6.0-beta.2.pkg"
+ZE_PKG_SHA256="917408198f6e7b9f1f4991556ddfa3c5586bc9f005dbb02af5ba9cb60c12252c"
+ZE_LINUX_SHA256_ZINETIC_AMD64="28c22b4ca0cb0afdbfd43ce828fa698a68cdafca31f7802b86c82173004f39ac"
+ZE_LINUX_SHA256_ZINETICD_AMD64="867bb6613a961e49056f44d8c83a94af6cfeb0ce0501bb9a70dc1c8b639e49ba"
+ZE_LINUX_SHA256_ZINETIC_ARM64="d45a2e9b534b22cda5cc3322055c42a7ea2887dc4044232b2d7f8048dd8c27cf"
+ZE_LINUX_SHA256_ZINETICD_ARM64="dd1b36fdad6f49e10129f7a72a4fdd1f69526c318de964844bdfb896a16c7edf"
 ZE_MACOS_BIN_DIR="/Library/Application Support/Zinetic/bin"
 ZE_LINUX_BIN_DIR="/opt/zinetic/bin"
 ZE_CLI_LINK="/usr/local/bin/zinetic"
@@ -335,7 +335,7 @@ ze_installed_is_newer() {
 		fi
 		return 1
 	fi
-	if ze_semver "$installed" >/dev/null && [ -n "$(ze_release_date "$ZE_VERSION")" ]; then
+	if ze_semver "$installed" >/dev/null; then
 		return 0
 	fi
 	installed_date="$(ze_release_date "$installed")"
