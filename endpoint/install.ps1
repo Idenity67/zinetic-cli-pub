@@ -3,22 +3,23 @@
     $ErrorActionPreference = 'Stop'
     $ProgressPreference = 'SilentlyContinue'
 
-    $version = 'p1-04-uat-20261025-g91abefa'
-    $baseUrl = 'https://github.com/Idenity67/zinetic-endpoint-pub/releases/download/p1-04-uat-20261025-g91abefa'
+    $version = '0.6.0-beta.1'
+    $baseUrl = 'https://github.com/Idenity67/zinetic-endpoint-pub/releases/download/v0.6.0-beta.1'
     if ($env:ZINETIC_ENDPOINT_BASE_URL) {
         $baseUrl = $env:ZINETIC_ENDPOINT_BASE_URL
     }
     $baseUrl = $baseUrl.TrimEnd('/')
     $hashes = @{
-        'zinetic-windows-amd64.exe'  = '357c1dd863c13e94f20a117ac05da63bed83552721649cea6efaefa5334832e5'
-        'zineticd-windows-amd64.exe' = '632ceec288e9c0c876190a860697a8074bca7d50b2fcdc1c079ee505f2cd1c4c'
-        'zinetic-windows-arm64.exe'  = 'bccb7c1cf308e78548fcfb3aa87c2b3de71bb5559430d779948faada9ccebdc6'
-        'zineticd-windows-arm64.exe' = '300090b44ac1098aae60621f49a59f35aa56e8b71922d50883840ec85565ab53'
+        'zinetic-windows-amd64.exe'  = '15b48fec8d2161f57784ffa56c28e9f0a5fe144058b5e936630ee6c0f7c72b49'
+        'zineticd-windows-amd64.exe' = '3a2efc694cc230fc6f0ad0bb18d61768810b419e0a2cddeb514b4992d5a90690'
+        'zinetic-windows-arm64.exe'  = 'b21ca566082fc55f093a0c5f465931ec818fbaf919e336377d36e7961ea82d60'
+        'zineticd-windows-arm64.exe' = 'c9e3ccac3dbaeb379393931cffb9bf715e3cd9c6053b7796c865acf7568ccc7b'
     }
     $serviceName = 'ZineticEndpointCollector'
     $serviceWaitSeconds = 90
     $servicePollSeconds = 3
     $datedRelease = '^(.+)-([0-9]{8})-g[0-9a-f]{7,40}$'
+    $semanticVersion = '^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$'
     $macCommand = 'curl -fsSL https://cli.zinetic.net/endpoint/install.sh | bash'
     $installerUrl = 'https://cli.zinetic.net/endpoint/install.ps1'
     if ($env:ZINETIC_ENDPOINT_WINDOWS_INSTALLER_URL) {
@@ -165,7 +166,75 @@
         return ''
     }
 
+    function Get-SemanticVersion([string]$text) {
+        $match = [regex]::Match($text, $semanticVersion)
+        if (-not $match.Success) {
+            return $null
+        }
+        $prerelease = @()
+        if ($match.Groups[4].Success) {
+            $prerelease = @($match.Groups[4].Value.Split('.'))
+            foreach ($identifier in $prerelease) {
+                if ($identifier -match '^0[0-9]+$') {
+                    return $null
+                }
+            }
+        }
+        return @{ Core = @($match.Groups[1].Value, $match.Groups[2].Value, $match.Groups[3].Value); Prerelease = $prerelease }
+    }
+
+    function Compare-Digits([string]$a, [string]$b) {
+        if ($a.Length -ne $b.Length) {
+            return [Math]::Sign($a.Length - $b.Length)
+        }
+        return [Math]::Sign([string]::CompareOrdinal($a, $b))
+    }
+
+    function Compare-Identifier([string]$a, [string]$b) {
+        $aDigits = $a -match '^[0-9]+$'
+        $bDigits = $b -match '^[0-9]+$'
+        if ($aDigits -and $bDigits) {
+            return Compare-Digits $a $b
+        }
+        if ($aDigits) {
+            return -1
+        }
+        if ($bDigits) {
+            return 1
+        }
+        return [Math]::Sign([string]::CompareOrdinal($a, $b))
+    }
+
+    function Compare-SemanticVersion($a, $b) {
+        for ($i = 0; $i -lt 3; $i++) {
+            $order = Compare-Digits $a.Core[$i] $b.Core[$i]
+            if ($order -ne 0) {
+                return $order
+            }
+        }
+        $x = @($a.Prerelease)
+        $y = @($b.Prerelease)
+        if ($x.Count -eq 0 -or $y.Count -eq 0) {
+            return [Math]::Sign($y.Count - $x.Count)
+        }
+        for ($i = 0; $i -lt [Math]::Min($x.Count, $y.Count); $i++) {
+            $order = Compare-Identifier $x[$i] $y[$i]
+            if ($order -ne 0) {
+                return $order
+            }
+        }
+        return [Math]::Sign($x.Count - $y.Count)
+    }
+
     function Test-NewerInstalled([string]$installed) {
+        $haveSemantic = Get-SemanticVersion $installed
+        $wantSemantic = Get-SemanticVersion $version
+        if ($haveSemantic -and $wantSemantic) {
+            return (Compare-SemanticVersion $haveSemantic $wantSemantic) -gt 0
+        }
+        if ($haveSemantic -and [regex]::IsMatch($version, $datedRelease)) {
+            return $true
+        }
         $have = [regex]::Match($installed, $datedRelease)
         $want = [regex]::Match($version, $datedRelease)
         if (-not ($have.Success -and $want.Success)) {

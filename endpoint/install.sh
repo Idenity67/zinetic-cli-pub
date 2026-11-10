@@ -1,15 +1,15 @@
 #!/bin/bash
 set -euo pipefail
 
-ZE_VERSION="p1-04-uat-20261025-g91abefa"
-ZE_BASE_URL="${ZINETIC_ENDPOINT_BASE_URL:-https://github.com/Idenity67/zinetic-endpoint-pub/releases/download/p1-04-uat-20261025-g91abefa}"
+ZE_VERSION="0.6.0-beta.1"
+ZE_BASE_URL="${ZINETIC_ENDPOINT_BASE_URL:-https://github.com/Idenity67/zinetic-endpoint-pub/releases/download/v0.6.0-beta.1}"
 ZE_BASE_URL="${ZE_BASE_URL%/}"
-ZE_PKG="Zinetic-Endpoint-p1-04-uat-20261025-g91abefa.pkg"
-ZE_PKG_SHA256="26321c20a7ff1d5a884c014dc3331b05fed77d66961c4981d48219589bb46aaf"
-ZE_LINUX_SHA256_ZINETIC_AMD64="5cc4527a89fd05958ee160f6329e6fb67205b873c65d46f347552cf802476330"
-ZE_LINUX_SHA256_ZINETICD_AMD64="3cea21e33237686131247e1cb0d435d266b17c9aa26cbd15049a00c060c7c17e"
-ZE_LINUX_SHA256_ZINETIC_ARM64="ca976ee2a93ad416c0d6781360f5dd06d4129c35fc996e8cfb3339deec7410d8"
-ZE_LINUX_SHA256_ZINETICD_ARM64="345429455e46ff7a5a7fe0a71750c2560bca67221dbb20aa24b8ea82bb7b4da9"
+ZE_PKG="Zinetic-Endpoint-0.6.0-beta.1.pkg"
+ZE_PKG_SHA256="550376a12b18b42f7af309c39ed43ae0943c557652ebd8ff7ba1444a05373d3a"
+ZE_LINUX_SHA256_ZINETIC_AMD64="4fdd7f322327d3bcc6ae4da5772e291ef44bd6ac4b737ae4887b6fd1e0f58078"
+ZE_LINUX_SHA256_ZINETICD_AMD64="c42e0416f2c2733081fe3ed70ffed7c5336537f0cfad2b8f2dfae51cd2572d74"
+ZE_LINUX_SHA256_ZINETIC_ARM64="34d2f6f3719bf9e30cabc9b4c14963d9710016e2a294521148b107328d3d898d"
+ZE_LINUX_SHA256_ZINETICD_ARM64="736b2557f1b07402e0956a0f224006142a13818f7b0a6dc22a2f7ce51873d7e6"
 ZE_MACOS_BIN_DIR="/Library/Application Support/Zinetic/bin"
 ZE_LINUX_BIN_DIR="/opt/zinetic/bin"
 ZE_CLI_LINK="/usr/local/bin/zinetic"
@@ -211,8 +211,133 @@ ze_release_date() {
 	printf '%s\n' "$1" | sed -n 's/^..*-\([0-9]\{8\}\)-g[0-9a-f]\{7,40\}$/\1/p'
 }
 
+ze_semver_identifiers() {
+	local list="$1" strict="$2" id
+	local -a ids
+	case "$list" in
+	"" | .* | *. | *..*) return 1 ;;
+	esac
+	IFS=. read -r -a ids <<<"$list"
+	for id in "${ids[@]}"; do
+		case "$id" in
+		0?*)
+			if [ "$strict" = 1 ] && ze_digits "$id"; then
+				return 1
+			fi
+			;;
+		esac
+	done
+}
+
+ze_digits() {
+	case "$1" in
+	"" | *[!0-9]*) return 1 ;;
+	esac
+}
+
+ze_semver() {
+	local pattern='^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-([0-9A-Za-z.-]+))?(\+([0-9A-Za-z.-]+))?$'
+	local core pre build has_pre has_build
+	[[ $1 =~ $pattern ]] || return 1
+	core="${BASH_REMATCH[1]} ${BASH_REMATCH[2]} ${BASH_REMATCH[3]}"
+	has_pre="${BASH_REMATCH[4]}"
+	pre="${BASH_REMATCH[5]}"
+	has_build="${BASH_REMATCH[6]}"
+	build="${BASH_REMATCH[7]}"
+	if [ -n "$has_pre" ]; then
+		ze_semver_identifiers "$pre" 1 || return 1
+	fi
+	if [ -n "$has_build" ]; then
+		ze_semver_identifiers "$build" 0 || return 1
+	fi
+	printf '%s %s\n' "$core" "$pre"
+}
+
+ze_order_text() {
+	local sorted
+	if [ "$1" = "$2" ]; then
+		printf '=\n'
+		return 0
+	fi
+	sorted="$(printf '%s\n%s\n' "$1" "$2" | LC_ALL=C sort)"
+	if [ "${sorted%%$'\n'*}" = "$1" ]; then
+		printf '<\n'
+	else
+		printf '>\n'
+	fi
+}
+
+ze_order_digits() {
+	if [ "${#1}" -lt "${#2}" ]; then
+		printf '<\n'
+	elif [ "${#1}" -gt "${#2}" ]; then
+		printf '>\n'
+	else
+		ze_order_text "$1" "$2"
+	fi
+}
+
+ze_order_identifiers() {
+	if ze_digits "$1" && ze_digits "$2"; then
+		ze_order_digits "$1" "$2"
+	elif ze_digits "$1"; then
+		printf '<\n'
+	elif ze_digits "$2"; then
+		printf '>\n'
+	else
+		ze_order_text "$1" "$2"
+	fi
+}
+
+ze_semver_order() {
+	local a b order i
+	local a_major a_minor a_patch a_pre b_major b_minor b_patch b_pre
+	local -a x y
+	a="$(ze_semver "$1")" || return 1
+	b="$(ze_semver "$2")" || return 1
+	read -r a_major a_minor a_patch a_pre <<<"$a"
+	read -r b_major b_minor b_patch b_pre <<<"$b"
+	for order in "$(ze_order_digits "$a_major" "$b_major")" "$(ze_order_digits "$a_minor" "$b_minor")" "$(ze_order_digits "$a_patch" "$b_patch")"; do
+		if [ "$order" != "=" ]; then
+			printf '%s\n' "$order"
+			return 0
+		fi
+	done
+	if [ -z "$a_pre" ] || [ -z "$b_pre" ]; then
+		if [ -z "$a_pre" ] && [ -z "$b_pre" ]; then
+			printf '=\n'
+		elif [ -z "$a_pre" ]; then
+			printf '>\n'
+		else
+			printf '<\n'
+		fi
+		return 0
+	fi
+	IFS=. read -r -a x <<<"$a_pre"
+	IFS=. read -r -a y <<<"$b_pre"
+	i=0
+	while [ "$i" -lt "${#x[@]}" ] && [ "$i" -lt "${#y[@]}" ]; do
+		order="$(ze_order_identifiers "${x[$i]}" "${y[$i]}")"
+		if [ "$order" != "=" ]; then
+			printf '%s\n' "$order"
+			return 0
+		fi
+		i=$((i + 1))
+	done
+	ze_order_digits "${#x[@]}" "${#y[@]}"
+}
+
 ze_installed_is_newer() {
-	local installed="$1" installed_date release_date
+	local installed="$1" installed_date release_date order
+	if order="$(ze_semver_order "$installed" "$ZE_VERSION")"; then
+		if [ "$order" = ">" ]; then
+			return 0
+		fi
+		return 1
+	fi
+	if ze_semver "$installed" >/dev/null && [ -n "$(ze_release_date "$ZE_VERSION")" ]; then
+		return 0
+	fi
 	installed_date="$(ze_release_date "$installed")"
 	release_date="$(ze_release_date "$ZE_VERSION")"
 	[ -n "$installed_date" ] && [ -n "$release_date" ] &&
