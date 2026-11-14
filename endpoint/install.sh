@@ -1,15 +1,23 @@
 #!/bin/bash
 set -euo pipefail
 
-ZE_VERSION="0.6.0-beta.4"
-ZE_BASE_URL="${ZINETIC_ENDPOINT_BASE_URL:-https://github.com/Idenity67/zinetic-endpoint-pub/releases/download/v0.6.0-beta.4}"
+ZE_VERSION="0.6.0-beta.5"
+ZE_BASE_URL="https://github.com/Idenity67/zinetic-endpoint-pub/releases/download/v0.6.0-beta.5"
+ZE_WINDOWS_INSTALLER="https://cli.zinetic.net/endpoint/install.ps1"
+ZE_BASE_HOST="${ZE_BASE_URL#https://}"
+case "${ZE_BASE_HOST%%/*}" in
+*.test | *.invalid)
+	ZE_WINDOWS_INSTALLER="${ZINETIC_ENDPOINT_WINDOWS_INSTALLER_URL:-$ZE_WINDOWS_INSTALLER}"
+	;;
+esac
+ZE_BASE_URL="${ZINETIC_ENDPOINT_BASE_URL:-$ZE_BASE_URL}"
 ZE_BASE_URL="${ZE_BASE_URL%/}"
-ZE_PKG="Zinetic-Endpoint-0.6.0-beta.4.pkg"
-ZE_PKG_SHA256="1922714f550fa1b065d5ed4f874514c009da5fae67f3baf8cbc45ab23a942723"
-ZE_LINUX_SHA256_ZINETIC_AMD64="9a4fc25df5a8a5c9dc1ef0e0f320a78d775401619c046caefb5c0eee480e273f"
-ZE_LINUX_SHA256_ZINETICD_AMD64="5aeda7da02b756855aca28378050ee643b0181ed3827d0fa51301266c46b3655"
-ZE_LINUX_SHA256_ZINETIC_ARM64="3bf355e04e63b06da209a81f946f5430235917b1a32911f9f1b7acd9b6617a50"
-ZE_LINUX_SHA256_ZINETICD_ARM64="969f710ad7f2e0308f03f97ba875bded7d88ba365ebd3cfe48fd6820e8f0d240"
+ZE_PKG="Zinetic-Endpoint-0.6.0-beta.5.pkg"
+ZE_PKG_SHA256="6626e566fc3e35de52ddc2122187e9fcbc597ff18f981a57c36814f5fae8a7d0"
+ZE_LINUX_SHA256_ZINETIC_AMD64="e010a66748f12adb5017620d6390db8cd4868c659bd1b0eb19fc8814147699d1"
+ZE_LINUX_SHA256_ZINETICD_AMD64="93ef90d8ff63da9fb43f140710a3acb9b903d3ce378cdf128beda23f6a3ef3e3"
+ZE_LINUX_SHA256_ZINETIC_ARM64="5b08f39ed6d32be3088235d20b17c5a1fce06e5cb07c5cf4809b4994b1715861"
+ZE_LINUX_SHA256_ZINETICD_ARM64="251f78ce54eeb70850b0b2f4d3c9bbd40d7f4ced768f19c37e283c6f5cf041ea"
 ZE_MACOS_BIN_DIR="/Library/Application Support/Zinetic/bin"
 ZE_LINUX_BIN_DIR="/opt/zinetic/bin"
 ZE_CLI_LINK="/usr/local/bin/zinetic"
@@ -17,7 +25,6 @@ ZE_SYSTEMD_RUNTIME="/run/systemd/system"
 ZE_SYSTEMD_UNIT="/etc/systemd/system/zineticd-collector.service"
 ZE_SYSTEMD_CREDS="/usr/bin/systemd-creds /bin/systemd-creds"
 ZE_WSL_RELEASE="/proc/sys/kernel/osrelease"
-ZE_WINDOWS_INSTALLER="${ZINETIC_ENDPOINT_WINDOWS_INSTALLER_URL:-https://cli.zinetic.net/endpoint/install.ps1}"
 ZE_WINDOWS_COMMAND="irm $ZE_WINDOWS_INSTALLER | iex"
 ZE_SERVICE_WAIT_SECONDS=90
 ZE_SERVICE_POLL_SECONDS=3
@@ -25,6 +32,7 @@ ZE_OS=""
 ZE_ARCH=""
 ZE_BIN_DIR="$ZE_MACOS_BIN_DIR"
 ZE_WORK=""
+ZE_STAGED=""
 
 ze_say() {
 	printf '%s\n' "$*"
@@ -38,6 +46,13 @@ ze_fail() {
 ze_cleanup() {
 	if [ -n "$ZE_WORK" ]; then
 		rm -rf "$ZE_WORK"
+	fi
+	if [ -n "$ZE_STAGED" ]; then
+		if [ "$(id -u)" -eq 0 ]; then
+			rm -rf "$ZE_STAGED" || true
+		else
+			sudo -n rm -rf "$ZE_STAGED" 2>/dev/null || true
+		fi
 	fi
 }
 
@@ -373,17 +388,48 @@ ze_check_sum() {
 	fi
 }
 
+ze_root_sha256() {
+	if command -v sha256sum >/dev/null 2>&1; then
+		ze_as_root sha256sum "$1" | awk '{ print $1 }'
+	else
+		ze_as_root shasum -a 256 "$1" | awk '{ print $1 }'
+	fi
+}
+
+ze_verify_root_copy() {
+	local file="$1" expected="$2" what="$3" actual
+	if ! actual="$(ze_root_sha256 "$file")"; then
+		ze_as_root rm -rf "$file" || true
+		ze_fail "the $what could not be checked after it was copied; nothing was installed"
+	fi
+	if [ "$actual" != "$expected" ]; then
+		ze_as_root rm -rf "$file"
+		ze_fail "the $what changed after it was checked; nothing was installed"
+	fi
+}
+
 ze_install_macos() {
-	local pkg="$ZE_WORK/$ZE_PKG"
+	local pkg="$ZE_WORK/$ZE_PKG" staged
 	ze_fetch "$ZE_PKG" "$pkg"
 	ze_check_sum "$pkg" "$ZE_PKG_SHA256" "package"
 	ze_say "Checksum verified"
-	if [ "$(id -u)" -eq 0 ]; then
-		installer -pkg "$pkg" -target / || ze_fail "the macOS installer failed; see /var/log/install.log"
-	else
+	if [ "$(id -u)" -ne 0 ]; then
 		ze_say "Installing needs administrator rights. macOS may ask for your password."
-		sudo installer -pkg "$pkg" -target / || ze_fail "the macOS installer failed; see /var/log/install.log"
 	fi
+	staged="$(ze_as_root mktemp -d /private/var/tmp/zinetic-install.XXXXXX)" ||
+		ze_fail "could not create a protected folder for the package; nothing was installed"
+	ZE_STAGED="$staged"
+	if ! ze_as_root cp "$pkg" "$staged/$ZE_PKG"; then
+		ze_as_root rm -rf "$staged"
+		ze_fail "could not copy the package into $staged; nothing was installed"
+	fi
+	ze_verify_root_copy "$staged/$ZE_PKG" "$ZE_PKG_SHA256" "package"
+	if ! ze_as_root installer -pkg "$staged/$ZE_PKG" -target /; then
+		ze_as_root rm -rf "$staged"
+		ze_fail "the macOS installer failed; see /var/log/install.log"
+	fi
+	ze_as_root rm -rf "$staged"
+	ZE_STAGED=""
 }
 
 ze_install_linux() {
@@ -414,9 +460,15 @@ ze_install_linux() {
 			ze_fail "could not make $folder belong to root"
 		fi
 	done
-	ze_as_root install -o root -g root -m 0755 "$ZE_WORK/zineticd" "$ZE_BIN_DIR/zineticd" ||
+	ze_as_root install -o root -g root -m 0755 "$ZE_WORK/zineticd" "$ZE_BIN_DIR/.zineticd.new" ||
 		ze_fail "could not install zineticd into $ZE_BIN_DIR"
-	ze_as_root install -o root -g root -m 0755 "$ZE_WORK/zinetic" "$ZE_BIN_DIR/zinetic" ||
+	ze_verify_root_copy "$ZE_BIN_DIR/.zineticd.new" "$daemon_sum" "$daemon"
+	ze_as_root install -o root -g root -m 0755 "$ZE_WORK/zinetic" "$ZE_BIN_DIR/.zinetic.new" ||
+		ze_fail "could not install zinetic into $ZE_BIN_DIR"
+	ze_verify_root_copy "$ZE_BIN_DIR/.zinetic.new" "$cli_sum" "$cli"
+	ze_as_root mv -f "$ZE_BIN_DIR/.zineticd.new" "$ZE_BIN_DIR/zineticd" ||
+		ze_fail "could not install zineticd into $ZE_BIN_DIR"
+	ze_as_root mv -f "$ZE_BIN_DIR/.zinetic.new" "$ZE_BIN_DIR/zinetic" ||
 		ze_fail "could not install zinetic into $ZE_BIN_DIR"
 	if ! ze_as_root mkdir -p "$(dirname "$ZE_CLI_LINK")" || ! ze_as_root ln -sfn "$ZE_BIN_DIR/zinetic" "$ZE_CLI_LINK"; then
 		ze_say "Could not link $ZE_CLI_LINK to $ZE_BIN_DIR/zinetic; run zinetic as \"$ZE_BIN_DIR/zinetic\"."

@@ -3,17 +3,18 @@
     $ErrorActionPreference = 'Stop'
     $ProgressPreference = 'SilentlyContinue'
 
-    $version = '0.6.0-beta.4'
-    $baseUrl = 'https://github.com/Idenity67/zinetic-endpoint-pub/releases/download/v0.6.0-beta.4'
+    $version = '0.6.0-beta.5'
+    $baseUrl = 'https://github.com/Idenity67/zinetic-endpoint-pub/releases/download/v0.6.0-beta.5'
+    $testBuild = $baseUrl -match '^https://[^/]+\.(test|invalid)(/|$)'
     if ($env:ZINETIC_ENDPOINT_BASE_URL) {
         $baseUrl = $env:ZINETIC_ENDPOINT_BASE_URL
     }
     $baseUrl = $baseUrl.TrimEnd('/')
     $hashes = @{
-        'zinetic-windows-amd64.exe'  = 'e80fb18f1fa89ac177fa0d7140e58c3134137693ed30106e85b90d2c1c11620c'
-        'zineticd-windows-amd64.exe' = '3710970fc086cb6aa8b27cf3c7d67bb435654203edd51c2e70909915cb50ba0c'
-        'zinetic-windows-arm64.exe'  = '26031cc7691c19596138a2f08be555ec83f048d9de1226a966175789a7e60120'
-        'zineticd-windows-arm64.exe' = 'c558d193e25f7cb016ea754c44e5a64b71d0f8629246a305ef10f5ba91a7b0ed'
+        'zinetic-windows-amd64.exe'  = '64056d40c2e818fbacce38da4337fccb40e142411b2a3c1e9b5ba908fcc8f040'
+        'zineticd-windows-amd64.exe' = 'ac079d8ce4a075c796da941fea51a1f3a90922dd8870667c2e6b9aba4ed0a399'
+        'zinetic-windows-arm64.exe'  = '7cdf22625cf79f9f14148f42343b0b0d8fcb7c18ed80d6b5781dad74be2db8ba'
+        'zineticd-windows-arm64.exe' = 'd644b19cc4f4b4707e5f7a0f62712f7679861757f68e3f299d613f6a56f037e7'
     }
     $serviceName = 'ZineticEndpointCollector'
     $serviceWaitSeconds = 90
@@ -22,7 +23,7 @@
     $semanticVersion = '^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$'
     $macCommand = 'curl -fsSL https://cli.zinetic.net/endpoint/install.sh | bash'
     $installerUrl = 'https://cli.zinetic.net/endpoint/install.ps1'
-    if ($env:ZINETIC_ENDPOINT_WINDOWS_INSTALLER_URL) {
+    if ($testBuild -and $env:ZINETIC_ENDPOINT_WINDOWS_INSTALLER_URL) {
         $installerUrl = $env:ZINETIC_ENDPOINT_WINDOWS_INSTALLER_URL
     }
 
@@ -549,7 +550,14 @@
             }
             Remove-ReplacedPrograms $installDir
             foreach ($name in @('zinetic', 'zineticd')) {
-                Copy-Program (Join-Path $work "$name-windows-$arch.exe") (Join-Path $installDir "$name.exe")
+                $file = "$name-windows-$arch.exe"
+                $placed = Join-Path $installDir "$name.exe"
+                Copy-Program (Join-Path $work $file) $placed
+                $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $placed).Hash.ToLowerInvariant()
+                if ($actual -ne $hashes[$file]) {
+                    Remove-Item -LiteralPath $placed -Force -ErrorAction SilentlyContinue
+                    Stop-Installer "$file changed after it was checked; it was removed, so run the installer again"
+                }
             }
             if ($service) {
                 Write-Host 'Restarting the endpoint service with the new version'
