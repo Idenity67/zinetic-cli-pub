@@ -1,8 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
-ZE_VERSION="0.6.0-beta.5"
-ZE_BASE_URL="https://github.com/Idenity67/zinetic-endpoint-pub/releases/download/v0.6.0-beta.5"
+ZE_VERSION="0.6.0-beta.6"
+ZE_BASE_URL="https://github.com/Idenity67/zinetic-endpoint-pub/releases/download/v0.6.0-beta.6"
 ZE_WINDOWS_INSTALLER="https://cli.zinetic.net/endpoint/install.ps1"
 ZE_BASE_HOST="${ZE_BASE_URL#https://}"
 case "${ZE_BASE_HOST%%/*}" in
@@ -12,12 +12,12 @@ case "${ZE_BASE_HOST%%/*}" in
 esac
 ZE_BASE_URL="${ZINETIC_ENDPOINT_BASE_URL:-$ZE_BASE_URL}"
 ZE_BASE_URL="${ZE_BASE_URL%/}"
-ZE_PKG="Zinetic-Endpoint-0.6.0-beta.5.pkg"
-ZE_PKG_SHA256="6626e566fc3e35de52ddc2122187e9fcbc597ff18f981a57c36814f5fae8a7d0"
-ZE_LINUX_SHA256_ZINETIC_AMD64="e010a66748f12adb5017620d6390db8cd4868c659bd1b0eb19fc8814147699d1"
-ZE_LINUX_SHA256_ZINETICD_AMD64="93ef90d8ff63da9fb43f140710a3acb9b903d3ce378cdf128beda23f6a3ef3e3"
-ZE_LINUX_SHA256_ZINETIC_ARM64="5b08f39ed6d32be3088235d20b17c5a1fce06e5cb07c5cf4809b4994b1715861"
-ZE_LINUX_SHA256_ZINETICD_ARM64="251f78ce54eeb70850b0b2f4d3c9bbd40d7f4ced768f19c37e283c6f5cf041ea"
+ZE_PKG="Zinetic-Endpoint-0.6.0-beta.6.pkg"
+ZE_PKG_SHA256="d471f6a4aa95eacc6104859a277e3da589352d7cfc90f25de88845e08af314ae"
+ZE_LINUX_SHA256_ZINETIC_AMD64="f5cafe1b909afdee51ee281b3e7c2e98015298cb2285b77d7b46e4834764238e"
+ZE_LINUX_SHA256_ZINETICD_AMD64="48d574eca64f737b27b4079b6793880118108f9b493f843befb10d102df9886a"
+ZE_LINUX_SHA256_ZINETIC_ARM64="4bf7b6305f95db86b1c2f464080b42ffcfc8ca7635af6240d190062362d675bf"
+ZE_LINUX_SHA256_ZINETICD_ARM64="ce8b77dc251061f347a44cc8107d4165df37bf8d3e59d9e521ad203e88456983"
 ZE_MACOS_BIN_DIR="/Library/Application Support/Zinetic/bin"
 ZE_LINUX_BIN_DIR="/opt/zinetic/bin"
 ZE_CLI_LINK="/usr/local/bin/zinetic"
