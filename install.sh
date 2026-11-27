@@ -100,7 +100,7 @@ download_release_assets() {
 verify_sigstore_bundle() {
   if [ "$SKIP_SIGSTORE" = "1" ]; then
     printf "warning: Sigstore verification explicitly disabled via ZIN_SKIP_SIGSTORE=1\n" >&2
-    printf "warning: installing without release signature verification\n" >&2
+    printf "warning: installing WITHOUT release signature verification\n" >&2
     return 0
   fi
 
@@ -115,8 +115,8 @@ verify_sigstore_bundle() {
   fi
 
   if [ ! -s "checksums.txt.sigstore.json" ]; then
-    printf "error: cosign is installed but checksums.txt.sigstore.json is missing\n" >&2
-    printf "error: refusing to install an unverified release; set ZIN_SKIP_SIGSTORE=1 to override\n" >&2
+    printf "error: cosign is installed but the Sigstore bundle (checksums.txt.sigstore.json) is missing;\n" >&2
+    printf "error: refusing to install an unverified release. Set ZIN_SKIP_SIGSTORE=1 to override.\n" >&2
     exit 1
   fi
 
@@ -126,7 +126,7 @@ verify_sigstore_bundle() {
     --certificate-oidc-issuer "$SIGSTORE_OIDC_ISSUER" \
     --certificate-identity-regexp "$SIGSTORE_IDENTITY_REGEX" \
     checksums.txt >/dev/null 2>&1; then
-    printf "error: Sigstore signature verification failed; refusing to install\n" >&2
+    printf "error: Sigstore signature verification failed; refusing to install.\n" >&2
     exit 1
   fi
   printf "Sigstore signature verified.\n"
